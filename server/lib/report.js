@@ -90,17 +90,32 @@ export function buildReportMarkdown(items, runDate) {
   return md.join('\n');
 }
 
-// 마크다운 + 카드 마커 → HTML
+// 마크다운 + 카드 마커 → HTML (모든 스타일 inline — 메일 클라이언트 호환)
 export function markdownToHtml(md) {
   const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const lines = md.split(/\r?\n/);
   const out = [];
 
+  // 색상 팔레트
+  const C = {
+    text: '#0f172a',
+    textSub: '#334155',
+    textMuted: '#64748b',
+    textLight: '#94a3b8',
+    border: '#e2e8f0',
+    bg: '#f8fafc',
+    bgCard: '#ffffff',
+    accent: '#0f172a',
+    accentLight: '#1e293b',
+  };
+
+  const FF = "'Apple SD Gothic Neo','Pretendard','Malgun Gothic',Arial,sans-serif";
+
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
 
-    // 카드 블록
+    // 카드 블록 → inline-style div
     if (line.trim() === '::CARD_START::') {
       const meta = { AGENCY: '', NAME: '', BIDNO: '', AGENT: 'N', REASON: '' };
       i++;
@@ -109,75 +124,68 @@ export function markdownToHtml(md) {
         if (m) meta[m[1]] = m[2];
         i++;
       }
-      i++; // ::CARD_END::
-      const badge = meta.AGENT === 'Y'
-        ? '<span class="b-agent">채용대행</span>'
-        : '<span class="b-other">그 외</span>';
-      out.push(`<div class="notice-card ${meta.AGENT === 'Y' ? 'agent' : 'other'}">
-  <div class="card-agency">${esc(meta.AGENCY)}</div>
-  <div class="card-name">${esc(meta.NAME)}</div>
-  <div class="card-meta"><code>${esc(meta.BIDNO)}</code>${badge}${meta.REASON ? `<span class="card-reason">${esc(meta.REASON)}</span>` : ''}</div>
-</div>`);
+      i++;
+      const isAgent = meta.AGENT === 'Y';
+      const cardBg = isAgent ? '#f8fafc' : '#ffffff';
+      const borderLeft = isAgent ? `4px solid ${C.accent}` : `4px solid #cbd5e1`;
+      const badgeBg = isAgent ? C.accent : '#e2e8f0';
+      const badgeFg = isAgent ? '#ffffff' : C.textSub;
+      const badgeLabel = isAgent ? '채용대행' : '그 외';
+
+      out.push(
+        `<div style="background:${cardBg};border:1px solid ${C.border};border-left:${borderLeft};border-radius:8px;padding:18px 22px;margin:18px 0 6px;">` +
+          `<div style="font-size:13px;color:${C.textMuted};font-weight:600;">${esc(meta.AGENCY)}</div>` +
+          `<div style="font-size:19px;font-weight:700;color:${C.text};margin:5px 0 12px;line-height:1.35;">${esc(meta.NAME)}</div>` +
+          `<div style="font-size:12.5px;">` +
+            `<span style="font-family:'Consolas','Menlo',monospace;background:#e2e8f0;color:${C.textSub};padding:2px 8px;border-radius:3px;font-size:12px;margin-right:8px;">${esc(meta.BIDNO)}</span>` +
+            `<span style="display:inline-block;background:${badgeBg};color:${badgeFg};padding:3px 10px;border-radius:3px;font-weight:600;font-size:11.5px;">${badgeLabel}</span>` +
+            (meta.REASON ? `<div style="color:${C.textMuted};font-size:12px;margin-top:6px;">${esc(meta.REASON)}</div>` : '') +
+          `</div>` +
+        `</div>`
+      );
       continue;
     }
 
-    if (/^# /.test(line)) { out.push(`<h1>${esc(line.slice(2))}</h1>`); i++; continue; }
-    if (/^## /.test(line)) { out.push(`<h2>${esc(line.slice(3))}</h2>`); i++; continue; }
-    if (/^### /.test(line)) { out.push(`<h3>${esc(line.slice(4))}</h3>`); i++; continue; }
-    if (/^---\s*$/.test(line)) { out.push('<hr/>'); i++; continue; }
+    if (/^# /.test(line)) {
+      out.push(`<h1 style="font-size:22px;font-weight:700;letter-spacing:-0.3px;margin:0 0 8px;color:${C.text};">${esc(line.slice(2))}</h1>`);
+      i++; continue;
+    }
+    if (/^## /.test(line)) {
+      out.push(`<h2 style="font-size:16px;font-weight:700;margin:32px 0 16px;padding:10px 16px;background:${C.accent};color:#ffffff;border-radius:6px;letter-spacing:-0.2px;">${esc(line.slice(3))}</h2>`);
+      i++; continue;
+    }
+    if (/^### /.test(line)) {
+      out.push(`<h3 style="font-size:14px;margin-top:20px;color:${C.textSub};">${esc(line.slice(4))}</h3>`);
+      i++; continue;
+    }
+    if (/^---\s*$/.test(line)) {
+      out.push(`<hr style="border:0;border-top:1px dashed #cbd5e1;margin:20px 0;"/>`);
+      i++; continue;
+    }
 
     if (/^- /.test(line)) {
-      out.push('<ul>');
+      out.push(`<ul style="padding-left:20px;margin:10px 0 16px;">`);
       while (i < lines.length && /^- /.test(lines[i])) {
         let txt = esc(lines[i].slice(2));
-        txt = txt.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-        out.push(`<li>${txt}</li>`);
+        txt = txt.replace(/\*\*(.+?)\*\*/g, `<strong style="color:${C.text};font-weight:700;">$1</strong>`);
+        out.push(`<li style="margin:4px 0;color:${C.textSub};line-height:1.6;">${txt}</li>`);
         i++;
         while (i < lines.length && /^\s{2,}ㅇ /.test(lines[i])) {
-          out.push(`<li class="sub">${esc(lines[i].trim())}</li>`);
+          out.push(`<li style="list-style:none;margin-left:-12px;color:${C.textMuted};font-size:13.5px;line-height:1.65;">${esc(lines[i].trim())}</li>`);
           i++;
         }
       }
-      out.push('</ul>');
+      out.push(`</ul>`);
       continue;
     }
 
     if (line.trim() === '') { out.push(''); i++; continue; }
     let txt = esc(line);
-    txt = txt.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-    out.push(`<p>${txt}</p>`);
+    txt = txt.replace(/\*\*(.+?)\*\*/g, `<strong style="color:${C.text};font-weight:700;">$1</strong>`);
+    out.push(`<p style="margin:6px 0;color:${C.textSub};line-height:1.6;">${txt}</p>`);
     i++;
   }
 
-  return `<!doctype html><html><head><meta charset="utf-8">
-  <link rel="preconnect" href="https://cdn.jsdelivr.net">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
-  <style>
-    body { font-family: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
-           color: #0f172a; line-height: 1.6; max-width: 760px; margin: 0 auto; padding: 28px 24px; background: #f8fafc; font-size: 14px; }
-    h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.3px; margin: 0 0 8px; color: #0f172a; }
-    h2 { font-size: 16px; font-weight: 700; margin: 32px 0 16px; padding: 9px 16px;
-         background: #0f172a; color: #fff; border-radius: 6px; letter-spacing: -0.2px; }
-    h3 { font-size: 14px; margin-top: 20px; color: #475569; }
-    p { margin: 6px 0; color: #334155; }
-    hr { border: 0; border-top: 1px dashed #cbd5e1; margin: 20px 0; }
-    code { font-family: 'JetBrains Mono', 'Consolas', monospace; background: #e2e8f0; padding: 2px 7px; border-radius: 3px; font-size: 12px; color: #475569; }
-    ul { padding-left: 20px; margin: 10px 0 16px; }
-    li { margin: 3px 0; color: #1e293b; }
-    li.sub { list-style: none; margin-left: -12px; color: #475569; font-size: 13.5px; }
-    strong { color: #0f172a; font-weight: 700; }
-
-    /* 카드 — 업체명·공고명 부각 */
-    .notice-card { background: #fff; border: 1px solid #e2e8f0; border-left: 4px solid #cbd5e1;
-                   border-radius: 8px; padding: 18px 22px; margin: 18px 0 6px;
-                   box-shadow: 0 1px 3px rgba(15,23,42,0.04); }
-    .notice-card.agent { border-left-color: #0f172a; background: #f8fafc; }
-    .card-agency { font-size: 13px; color: #64748b; font-weight: 600; letter-spacing: -0.1px; }
-    .card-name { font-size: 19px; font-weight: 700; color: #0f172a; letter-spacing: -0.4px;
-                 margin: 5px 0 12px; line-height: 1.35; }
-    .card-meta { display: flex; align-items: center; gap: 10px; font-size: 12.5px; flex-wrap: wrap; }
-    .b-agent { background: #0f172a; color: #fff; padding: 3px 10px; border-radius: 3px; font-weight: 600; font-size: 11.5px; }
-    .b-other { background: #e2e8f0; color: #475569; padding: 3px 10px; border-radius: 3px; font-weight: 600; font-size: 11.5px; }
-    .card-reason { color: #64748b; font-size: 12px; flex-basis: 100%; margin-top: 4px; }
-  </style></head><body>${out.join('\n')}</body></html>`;
+  // 외부 link/style 없이 inline 만 — 메일 클라이언트 호환성 최대화
+  return `<div style="max-width:760px;margin:0 auto;font-family:${FF};color:${C.text};line-height:1.6;background:${C.bg};padding:28px 24px;font-size:14px;">${out.join('\n')}</div>`;
 }

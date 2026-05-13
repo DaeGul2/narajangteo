@@ -40,19 +40,21 @@ export async function sendReport({ subject, html, text, attachments, to }) {
 
   console.log('to : ', recipients);
 
-  // html 없으면 text 를 isbr-card-system 패턴으로 wrap
+  // html 없으면 text 를 wrap
   const htmlFinal = html || `
-    <div style="font-family: Pretendard, sans-serif; font-size: 14px; white-space: pre-line; line-height: 1.6;">
+    <div style="font-family:'Apple SD Gothic Neo','Pretendard','Malgun Gothic',Arial,sans-serif;font-size:14px;white-space:pre-line;line-height:1.6;">
       ${(text || subject).replace(/\n/g, '<br/>')}
     </div>
   `;
 
+  // ❗text 옵션 없이 html 만 보냄 — text 까지 같이 보내면 multipart/alternative 가 되어
+  //   일부 메일 클라이언트(메일플러그 웹 PC 포함)가 text/plain 부분을 우선 표시함.
+  //   원본 마크다운은 첨부파일(report.md)로 전달.
   try {
     const info = await transporter().sendMail({
       from: `"g2b 채용 크롤러" <${process.env.EMAIL_USER}>`,
       to: recipients,
       subject,
-      text: text || subject,  // 백업용
       html: htmlFinal,
       attachments,
     });
