@@ -270,24 +270,27 @@ app.post('/api/download-zip', async (req, res) => {
   res.setHeader('X-Summary-B64', summaryB64);
   res.setHeader('Access-Control-Expose-Headers', 'X-File-Count, X-Summary-B64');
 
+  const safePart = (s) => String(s || '').replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, ' ').trim();
+  const folder = `${safePart(bidNo) || 'g2b'}_${safePart(name).slice(0, 60)}`;
+
   const archive = archiver('zip', { zlib: { level: 9 } });
   archive.on('error', (e) => { console.error('[zip] archive err:', e); });
   archive.pipe(res);
   for (const f of downloaded) {
     try {
-      archive.append(f.bytes, { name: f.name });
+      archive.append(f.bytes, { name: `${folder}/${safePart(f.name)}` });
     } catch (e) {
       diagLog.push(`zip append 실패 ${f.name}: ${e.message}`);
     }
   }
   if (summaryMd) {
-    archive.append(Buffer.from(summaryMd, 'utf-8'), { name: '_summary.md' });
+    archive.append(Buffer.from(summaryMd, 'utf-8'), { name: `${folder}/_summary.md` });
   }
   if (!downloaded.length) {
     const txt =
       `[자동 다운로드 실패]\n\n공고번호: ${bidNo}\n공고명: ${name}\n` +
       `에러: ${err || '(파일 0개)'}\n\n--- diag ---\n` + diagLog.join('\n');
-    archive.append(Buffer.from(txt, 'utf-8'), { name: '_FAILED.txt' });
+    archive.append(Buffer.from(txt, 'utf-8'), { name: `${folder}/_FAILED.txt` });
   }
   await archive.finalize();
   console.log(`[zip] 종료: ${downloaded.length}개 파일, 요약 ${summaryMd.length}자`);

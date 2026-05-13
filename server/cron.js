@@ -31,6 +31,14 @@ function arg(name, def) {
   return m ? m.split('=')[1] : def;
 }
 
+// 파일/폴더 이름 안전화 (모든 OS 호환)
+function safePathPart(s) {
+  return String(s || '')
+    .replace(/[\\/:*?"<>|]+/g, '_')   // 윈도우 금지문자
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 async function buildItemsFromSearch(daysBack) {
   const rows = await callSearchApi('채용', 100, daysBack);
   const items = [];
@@ -165,17 +173,22 @@ async function main() {
     const md = buildReportMarkdown(newItems);
     const html = markdownToHtml(md);
     const today = new Date().toISOString().slice(0, 10);
-    const subject = `[g2b 채용 리포트] ${today} 신규 ${newCount}건 (채용대행 ${newItems.filter(i => i.aiIsAgent).length}건)`;
+    const agentCount = newItems.filter(i => i.aiIsAgent).length;
+    const subject = `[g2b 채용 리포트] ${today} 신규 ${newCount}건 (채용대행 ${agentCount}건)`;
 
-    // 첨부: 마크다운 원본 + (옵션) 다운받은 파일 ZIP
+    // 첨부: 마크다운 원본 + 채용대행 공고만 파일 ZIP
     const attachments = [
       { filename: `report-${today}.md`, content: Buffer.from(md, 'utf-8') },
     ];
-    // 신규 공고들의 첨부파일들 모두 한 ZIP 으로 (선택)
-    const allFiles = newItems.flatMap(it => (it._downloaded || []).map(f => ({
-      name: `${it.bidNo}__${f.name}`,
-      bytes: f.bytes,
-    })));
+    // 채용대행 공고 첨부파일만 (AI 판단 true 인 것)
+    const agentItems = newItems.filter(i => i.aiIsAgent === true);
+    const allFiles = agentItems.flatMap(it => {
+      const folder = `${safePathPart(it.bidNo)}_${safePathPart(it.name).slice(0, 60)}`;
+      return (it._downloaded || []).map(f => ({
+        name: `${folder}/${safePathPart(f.name)}`,
+        bytes: f.bytes,
+      }));
+    });
     if (allFiles.length) {
       const zipBuf = await new Promise((resolve, reject) => {
         const chunks = [];
