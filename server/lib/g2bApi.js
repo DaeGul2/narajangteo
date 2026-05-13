@@ -2,6 +2,7 @@
 // Python 버전과 동일한 URL/헤더/payload
 
 import { chromium } from 'playwright';
+import { browserLaunchOpts } from './utils.js';
 
 const SEARCH_URL = 'https://www.g2b.go.kr/pn/pnp/pnpe/BidPbac/selectBidPbacScrollTypeList.do';
 const DETAIL_URL = 'https://www.g2b.go.kr/pn/pnp/pnpe/ItemBidPbac/selectItemAnncMngV.do';
@@ -42,10 +43,7 @@ let _cachedCookies = null;
 export async function getSessionCookies(force = false) {
   if (_cachedCookies && !force) return _cachedCookies;
   console.log('[cookie] 헤드리스 브라우저로 g2b.go.kr 쿠키 수집');
-  const browser = await chromium.launch({
-    headless: true,
-    args: ['--disable-blink-features=AutomationControlled', '--no-sandbox', '--disable-dev-shm-usage'],
-  });
+  const browser = await chromium.launch(browserLaunchOpts());
   try {
     const ctx = await browser.newContext({
       viewport: { width: 1600, height: 1000 },

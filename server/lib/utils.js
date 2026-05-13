@@ -37,3 +37,17 @@ export function money(v) {
   if (!digits) return s;
   return Number(digits).toLocaleString('en-US') + '원';
 }
+
+// Playwright 공통 launch 옵션
+// PW_BROWSER_PATH 환경변수 있으면 그 실행파일 사용 (Ubuntu 26.04 에서 시스템 Chrome 등)
+export function browserLaunchOpts(extra = {}) {
+  const opts = {
+    headless: true,
+    args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled'],
+    ...extra,
+  };
+  if (process.env.PW_BROWSER_PATH) {
+    opts.executablePath = process.env.PW_BROWSER_PATH;
+  }
+  return opts;
+}

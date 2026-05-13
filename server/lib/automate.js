@@ -2,6 +2,7 @@
 // 캡처한 body 들을 fetch 로 replay 하여 binary 응답만 추려서 반환
 
 import { chromium } from 'playwright';
+import { browserLaunchOpts } from './utils.js';
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36';
 const FILE_URL = 'https://www.g2b.go.kr/fs/fsc/fsca/fileUpload.do';
@@ -14,7 +15,7 @@ export async function automateDownload(bidNo, bidName) {
 
   try {
     D(`Playwright launch — bidNo=${JSON.stringify(bidNo)} name=${JSON.stringify(bidName)}`);
-    const browser = await chromium.launch({ headless: true });
+    const browser = await chromium.launch(browserLaunchOpts());
     try {
       const ctx = await browser.newContext({
         viewport: { width: 1600, height: 1000 },
