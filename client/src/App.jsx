@@ -7,6 +7,9 @@ import AdminDashboard from './pages/AdminDashboard.jsx'
 import AdminNotices from './pages/AdminNotices.jsx'
 import AdminNoticeDetail from './pages/AdminNoticeDetail.jsx'
 import AdminRecipients from './pages/AdminRecipients.jsx'
+import BidEmployee from './pages/BidEmployee.jsx'
+import BidEmployeeDetail from './pages/BidEmployeeDetail.jsx'
+import BidProject from './pages/BidProject.jsx'
 
 // ─ 좌측 drawer 메뉴 (그룹 단위로 향후 확장)
 const MENU_GROUPS = [
@@ -19,8 +22,13 @@ const MENU_GROUPS = [
       { to: '/crawl', label: '수동 크롤링' },
     ],
   },
-  // 추후 v2~ 신규 그룹은 여기에:
-  // { title: '한글문서 자동작성', items: [{ to: '/admin/templates', label: '양식 관리' }] },
+  {
+    title: '입찰',
+    items: [
+      { to: '/bid/employee', label: '직원' },
+      { to: '/bid/projects', label: '유사사업' },
+    ],
+  },
 ]
 
 function Protected({ children }) {
@@ -43,9 +51,14 @@ function Layout({ children }) {
     await logout()
     nav('/login')
   }
+  // 그룹 펼침/접힘 (기본: 모두 펼침)
+  const [openGroups, setOpenGroups] = useState(() =>
+    Object.fromEntries(MENU_GROUPS.map(g => [g.title, true]))
+  )
+  const toggle = (t) => setOpenGroups(p => ({ ...p, [t]: !p[t] }))
+
   return (
     <div className="layout-root">
-      {/* 상단 헤더 */}
       <header className="app-header">
         <div className="app-brand">경영지원헬퍼</div>
         <div className="header-spacer" />
@@ -53,23 +66,33 @@ function Layout({ children }) {
       </header>
 
       <div className="layout-body">
-        {/* 좌측 drawer */}
         <aside className="drawer">
-          {MENU_GROUPS.map(g => (
-            <div key={g.title} className="drawer-group">
-              <div className="drawer-group-title">{g.title}</div>
-              <nav className="drawer-nav">
-                {g.items.map(it => (
-                  <NavLink key={it.to} to={it.to} end={it.end}>
-                    {it.label}
-                  </NavLink>
-                ))}
-              </nav>
-            </div>
-          ))}
+          {MENU_GROUPS.map(g => {
+            const open = !!openGroups[g.title]
+            return (
+              <div key={g.title} className="drawer-group">
+                <button
+                  className={`drawer-group-title ${open ? 'open' : ''}`}
+                  onClick={() => toggle(g.title)}
+                  type="button"
+                >
+                  <span>{g.title}</span>
+                  <span className="caret">{open ? '▾' : '▸'}</span>
+                </button>
+                {open && (
+                  <nav className="drawer-nav">
+                    {g.items.map(it => (
+                      <NavLink key={it.to} to={it.to} end={it.end}>
+                        {it.label}
+                      </NavLink>
+                    ))}
+                  </nav>
+                )}
+              </div>
+            )
+          })}
         </aside>
 
-        {/* 메인 컨텐츠 */}
         <main className="app-main">
           <div className="app">{children}</div>
         </main>
@@ -89,6 +112,9 @@ export default function App() {
         <Route path="/admin/notices/:bidNo" element={<Protected><Layout><AdminNoticeDetail /></Layout></Protected>} />
         <Route path="/admin/recipients" element={<Protected><Layout><AdminRecipients /></Layout></Protected>} />
         <Route path="/crawl" element={<Protected><Layout><Crawl /></Layout></Protected>} />
+        <Route path="/bid/employee" element={<Protected><Layout><BidEmployee /></Layout></Protected>} />
+        <Route path="/bid/employee/:id" element={<Protected><Layout><BidEmployeeDetail /></Layout></Protected>} />
+        <Route path="/bid/projects" element={<Protected><Layout><BidProject /></Layout></Protected>} />
         <Route path="*" element={<Navigate to="/admin" replace />} />
       </Routes>
     </BrowserRouter>

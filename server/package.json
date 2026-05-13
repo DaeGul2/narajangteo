@@ -18,7 +18,8 @@
     "nodemailer": "^6.10.1",
     "openai": "^4.68.0",
     "pdf-parse": "^1.1.1",
-    "playwright": "^1.48.0"
+    "playwright": "^1.48.0",
+    "xlsx": "^0.18.5"
   },
   "bin": {
     "g2b-migrate": "./migrate.js",

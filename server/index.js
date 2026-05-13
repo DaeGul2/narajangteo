@@ -21,6 +21,11 @@ import { classifyBatch } from './lib/aiClassify.js';
 import { requireAuth, loginRoute, checkRoute, logoutRoute } from './lib/auth.js';
 import pool, {
   getActiveRecipients, addRecipient, deactivateRecipient, updateRecipient,
+  listEmployees, getEmployee, addEmployee, updateEmployee, deleteEmployee,
+  educationsCrud, careersCrud, certificationsCrud,
+  listProjects, addProject, updateProject, deleteProject,
+  listEmployeeProjects, listProjectEmployees,
+  addEmployeeProject, updateEmployeeProject, removeEmployeeProject,
 } from './lib/db.js';
 import { listFiles, readFile } from './lib/fileStore.js';
 
@@ -123,6 +128,184 @@ app.patch('/api/admin/recipients/:id', requireAuth, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// ─── /api/admin/bid-employees — 입찰 참여 인력 CRUD ───
+app.get('/api/admin/bid-employees', requireAuth, async (_req, res) => {
+  try {
+    const items = await listEmployees(true);
+    res.json({ items });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+app.post('/api/admin/bid-employees', requireAuth, async (req, res) => {
+  try {
+    const id = await addEmployee(req.body || {});
+    res.json({ ok: true, id });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+app.patch('/api/admin/bid-employees/:id', requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'invalid id' });
+    await updateEmployee(id, req.body || {});
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+app.delete('/api/admin/bid-employees/:id', requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'invalid id' });
+    await deleteEmployee(id);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// 직원 단건 + 모든 부속 정보 한 번에
+app.get('/api/admin/bid-employees/:id/full', requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'invalid id' });
+    const employee = await getEmployee(id);
+    if (!employee) return res.status(404).json({ error: 'not found' });
+    const [educations, careers, certifications, projects] = await Promise.all([
+      educationsCrud.listByOwner(id),
+      careersCrud.listByOwner(id),
+      certificationsCrud.listByOwner(id),
+      listEmployeeProjects(id),
+    ]);
+    res.json({ employee, educations, careers, certifications, projects });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── 학력 / 경력 / 자격증 CRUD (공통 패턴) ───
+function mountChildCrud(basePath, childPath, crud) {
+  // 목록 (직원별)
+  app.get(`/api/admin/bid-employees/:empId/${basePath}`, requireAuth, async (req, res) => {
+    try {
+      const empId = Number(req.params.empId);
+      if (!empId) return res.status(400).json({ error: 'invalid empId' });
+      const items = await crud.listByOwner(empId);
+      res.json({ items });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+  // 추가
+  app.post(`/api/admin/bid-employees/:empId/${basePath}`, requireAuth, async (req, res) => {
+    try {
+      const empId = Number(req.params.empId);
+      if (!empId) return res.status(400).json({ error: 'invalid empId' });
+      const id = await crud.add(empId, req.body || {});
+      res.json({ ok: true, id });
+    } catch (e) { res.status(400).json({ error: e.message }); }
+  });
+  // 수정
+  app.patch(`/api/admin/${childPath}/:id`, requireAuth, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (!id) return res.status(400).json({ error: 'invalid id' });
+      await crud.update(id, req.body || {});
+      res.json({ ok: true });
+    } catch (e) { res.status(400).json({ error: e.message }); }
+  });
+  // 삭제
+  app.delete(`/api/admin/${childPath}/:id`, requireAuth, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (!id) return res.status(400).json({ error: 'invalid id' });
+      await crud.remove(id);
+      res.json({ ok: true });
+    } catch (e) { res.status(400).json({ error: e.message }); }
+  });
+}
+mountChildCrud('educations',     'bid-educations',     educationsCrud);
+mountChildCrud('careers',        'bid-careers',        careersCrud);
+mountChildCrud('certifications', 'bid-certifications', certificationsCrud);
+
+// ─── 유사사업 마스터 CRUD ───
+app.get('/api/admin/bid-projects', requireAuth, async (_req, res) => {
+  try {
+    const items = await listProjects();
+    res.json({ items });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/api/admin/bid-projects/:id', requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'invalid id' });
+    const [[row]] = await pool.query(
+      `SELECT id, name, agency, start_date, end_date, contract_amount, description,
+              created_at, updated_at
+       FROM bid_projects WHERE id = ?`, [id]
+    );
+    if (!row) return res.status(404).json({ error: 'not found' });
+    const participants = await listProjectEmployees(id);
+    res.json({ project: row, participants });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/bid-projects', requireAuth, async (req, res) => {
+  try {
+    const id = await addProject(req.body || {});
+    res.json({ ok: true, id });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.patch('/api/admin/bid-projects/:id', requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'invalid id' });
+    await updateProject(id, req.body || {});
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.delete('/api/admin/bid-projects/:id', requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'invalid id' });
+    await deleteProject(id);
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// ─── 직원 ↔ 유사사업 join CRUD ───
+app.get('/api/admin/bid-employees/:empId/projects', requireAuth, async (req, res) => {
+  try {
+    const empId = Number(req.params.empId);
+    if (!empId) return res.status(400).json({ error: 'invalid empId' });
+    const items = await listEmployeeProjects(empId);
+    res.json({ items });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/bid-employees/:empId/projects', requireAuth, async (req, res) => {
+  try {
+    const empId = Number(req.params.empId);
+    if (!empId) return res.status(400).json({ error: 'invalid empId' });
+    const id = await addEmployeeProject(empId, req.body || {});
+    res.json({ ok: true, id });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.patch('/api/admin/bid-emp-projects/:id', requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'invalid id' });
+    await updateEmployeeProject(id, req.body || {});
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.delete('/api/admin/bid-emp-projects/:id', requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'invalid id' });
+    await removeEmployeeProject(id);
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
 // ─── /api/admin/stats — 요약 통계 ───

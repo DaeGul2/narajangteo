@@ -53,3 +53,24 @@ CREATE TABLE IF NOT EXISTS recipients (
   created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_active (active)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 입찰 참여 인력
+CREATE TABLE IF NOT EXISTS bid_employees (
+  id                  INT AUTO_INCREMENT PRIMARY KEY,
+  name                VARCHAR(50) NOT NULL,
+  birth_date          DATE,
+  position            VARCHAR(50),                 -- 본부장/수석파트장/파트장/연구원 등
+  final_edu           VARCHAR(50),                 -- 학사/석사/박사/고등학교 등
+  school              VARCHAR(100),
+  major               VARCHAR(100),
+  tech_grade          ENUM('상','중','하'),
+  grad_year           SMALLINT,
+  grad_month          TINYINT,
+  external_join_date  DATE,                        -- 외부용 입사일 (입찰 제안서용)
+  real_join_date      DATE,                        -- 실제 출근 시작일
+  active              TINYINT(1) NOT NULL DEFAULT 1,
+  created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_active (active),
+  INDEX idx_name (name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
