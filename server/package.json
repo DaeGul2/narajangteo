@@ -1,0 +1,28 @@
+{
+  "name": "g2b-crawler-server",
+  "version": "0.2.0",
+  "description": "나라장터 채용 크롤러 — Node Express 백엔드",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node --watch index.js",
+    "prod": "node index.js"
+  },
+  "dependencies": {
+    "@rhwp/core": "^0.7.2",
+    "archiver": "^7.0.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "mysql2": "^3.22.3",
+    "nodemailer": "^6.10.1",
+    "openai": "^4.68.0",
+    "pdf-parse": "^1.1.1",
+    "playwright": "^1.48.0"
+  },
+  "bin": {
+    "g2b-migrate": "./migrate.js",
+    "g2b-cron": "./cron.js",
+    "g2b-recipients": "./recipients.js"
+  }
+}

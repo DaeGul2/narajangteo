@@ -1,2 +1,25 @@
+# ───────── 시크릿 (절대 커밋 X) ─────────
 .env
+.env.*
+!.env.example
+
+# ───────── 의존성 ─────────
 node_modules/
+client/dist/
+
+# ───────── 런타임 데이터 ─────────
+server/data/                       # 첨부 파일 저장소 (EC2 디스크에서만)
+_ncs_data/_debug/
+server/_debug/
+
+# ───────── Python 백업 흔적 (이전 버전) ─────────
+server-python-backup/
+__pycache__/
+*.pyc
+
+# ───────── 임시 ─────────
+_ncs_data/*.html
+_ncs_data/*.txt
+*.log
+.DS_Store
+Thumbs.db
