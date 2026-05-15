@@ -8,6 +8,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import archiver from 'archiver';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -26,8 +27,11 @@ import pool, {
   listProjects, addProject, updateProject, deleteProject,
   listEmployeeProjects, listProjectEmployees,
   addEmployeeProject, updateEmployeeProject, removeEmployeeProject,
+  getCronSettings, updateCronSettings,
 } from './lib/db.js';
 import { listFiles, readFile } from './lib/fileStore.js';
+import { parsePages } from './lib/labParse.js';
+import { generateFromTemplate } from './lib/labGenerate.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3001;
@@ -308,6 +312,65 @@ app.delete('/api/admin/bid-emp-projects/:id', requireAuth, async (req, res) => {
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
+// ─── 실험실 — hwp/hwpx 페이지 분할 + GPT 생성 ───
+// 업로드 raw binary. 클라이언트가 ?filename=foo.hwp 로 확장자 알려줌
+app.post(
+  '/api/admin/lab/parse',
+  requireAuth,
+  express.raw({ type: '*/*', limit: '30mb' }),
+  async (req, res) => {
+    try {
+      const filename = String(req.query.filename || '');
+      if (!filename) return res.status(400).json({ error: 'filename 쿼리 필요' });
+      if (!req.body || !req.body.length) return res.status(400).json({ error: '본문(파일) 비어 있음' });
+      const pages = await parsePages(req.body, filename);
+      res.json({ filename, pages });
+    } catch (e) {
+      console.error('[lab/parse]', e);
+      res.status(500).json({ error: e.message });
+    }
+  }
+);
+
+app.post('/api/admin/lab/generate', requireAuth, async (req, res) => {
+  try {
+    const { template, instruction, scopes } = req.body || {};
+    const out = await generateFromTemplate({ template, instruction, scopes });
+    res.json({ result: out });
+  } catch (e) {
+    console.error('[lab/generate]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── /api/admin/cron-settings — 일일 자동 실행 시간 관리 ───
+app.get('/api/admin/cron-settings', requireAuth, async (_req, res) => {
+  try {
+    const s = await getCronSettings();
+    res.json({ ...s, next_run_at: computeNextRun(s) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+app.patch('/api/admin/cron-settings', requireAuth, async (req, res) => {
+  try {
+    await updateCronSettings(req.body || {});
+    const s = await getCronSettings();
+    res.json({ ok: true, settings: { ...s, next_run_at: computeNextRun(s) } });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+app.post('/api/admin/cron-settings/run-now', requireAuth, async (_req, res) => {
+  try {
+    const s = await getCronSettings();
+    fireCronChild(s.days_back, 'manual');
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ─── /api/admin/stats — 요약 통계 ───
 app.get('/api/admin/stats', requireAuth, async (_req, res) => {
   const [[n]]   = await pool.query(`SELECT COUNT(*) AS c FROM notices`);
@@ -479,6 +542,106 @@ app.post('/api/download-zip', async (req, res) => {
   console.log(`[zip] 종료: ${downloaded.length}개 파일, 요약 ${summaryMd.length}자`);
 });
 
-app.listen(PORT, '127.0.0.1', () => {
+// ─── 인프로세스 cron 스케줄러 (1분 tick, KST 기준) ───
+// DB cron_settings 테이블의 hour/minute/enabled/days_back 을 매 tick 마다 읽어 적용한다.
+// 같은 KST 일자에 한 번만 발화 (lastFiredKstDate 메모리 가드 + 부팅 시 cron_runs 조회로 재수화).
+const KST_FMT = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Seoul', hour12: false,
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit',
+});
+function getKstParts(date = new Date()) {
+  const obj = {};
+  for (const p of KST_FMT.formatToParts(date)) obj[p.type] = p.value;
+  return {
+    dateKey: `${obj.year}-${obj.month}-${obj.day}`,
+    hour: Number(obj.hour),
+    minute: Number(obj.minute),
+  };
+}
+
+function computeNextRun(s) {
+  if (!s || !s.enabled) return null;
+  const now = new Date();
+  const nowKst = getKstParts(now);
+  // 오늘 KST 시각의 분(minute)을 기준으로 next 계산
+  const nowMinTotal = nowKst.hour * 60 + nowKst.minute;
+  const tgtMinTotal = s.hour * 60 + s.minute;
+  const dayOffset = nowMinTotal < tgtMinTotal ? 0 : 1;
+  // KST 기준 next 일자 계산
+  const [y, m, d] = nowKst.dateKey.split('-').map(Number);
+  // KST = UTC+9. 우리는 KST 시각으로 표현된 Date 를 만든다.
+  const kstNext = new Date(Date.UTC(y, m - 1, d + dayOffset, s.hour - 9, s.minute, 0));
+  return kstNext.toISOString();
+}
+
+let lastFiredKstDate = null;   // 'YYYY-MM-DD' (KST)
+let cronChildRunning = false;
+
+function fireCronChild(daysBack, source = 'schedule') {
+  if (cronChildRunning) {
+    console.log(`[cron-scheduler] (${source}) 이미 실행 중 — 스킵`);
+    return;
+  }
+  cronChildRunning = true;
+  console.log(`[cron-scheduler] (${source}) cron.js --days=${daysBack} 시작`);
+  const cp = spawn(process.execPath, ['cron.js', `--days=${daysBack}`], {
+    cwd: __dirname,
+    stdio: 'inherit',
+    env: process.env,
+  });
+  cp.on('exit', (code) => {
+    cronChildRunning = false;
+    console.log(`[cron-scheduler] cron.js 종료 (code=${code})`);
+  });
+  cp.on('error', (e) => {
+    cronChildRunning = false;
+    console.error(`[cron-scheduler] spawn 실패:`, e);
+  });
+}
+
+async function rehydrateLastFired() {
+  // 부팅 시 — 오늘(KST)에 이미 cron 이 시작된 적이 있으면 재발화 방지.
+  // dateStrings:true 라 started_at 은 'YYYY-MM-DD HH:MM:SS' 문자열, 커넥션 timezone +09:00.
+  try {
+    const todayKst = getKstParts().dateKey;
+    const [[r]] = await pool.query(
+      `SELECT started_at FROM cron_runs
+       WHERE started_at >= ? ORDER BY id DESC LIMIT 1`,
+      [`${todayKst} 00:00:00`]
+    );
+    if (r) {
+      lastFiredKstDate = todayKst;
+      console.log(`[cron-scheduler] 오늘(${todayKst}) 이미 실행 기록 존재 — 재발화 방지`);
+    }
+  } catch (e) {
+    console.error('[cron-scheduler] rehydrate 실패:', e.message);
+  }
+}
+
+async function tick() {
+  try {
+    const s = await getCronSettings();
+    if (!s.enabled) return;
+    const { dateKey, hour, minute } = getKstParts();
+    if (lastFiredKstDate === dateKey) return;
+    if (hour === s.hour && minute === s.minute) {
+      lastFiredKstDate = dateKey;
+      fireCronChild(s.days_back, 'schedule');
+    }
+  } catch (e) {
+    console.error('[cron-scheduler] tick 실패:', e.message);
+  }
+}
+
+app.listen(PORT, '127.0.0.1', async () => {
   console.log(`[server] http://127.0.0.1:${PORT}  (model=${process.env.OPENAI_MODEL || 'gpt-4.1-mini'}, key=${process.env.OPENAI_API_KEY ? '설정됨' : '미설정'})`);
+  await rehydrateLastFired();
+  try {
+    const s = await getCronSettings();
+    console.log(`[cron-scheduler] 활성=${!!s.enabled}, ${String(s.hour).padStart(2,'0')}:${String(s.minute).padStart(2,'0')} KST, days_back=${s.days_back}`);
+  } catch (e) {
+    console.error('[cron-scheduler] 부팅 시 설정 조회 실패:', e.message);
+  }
+  setInterval(tick, 60_000);
 });

@@ -2,16 +2,16 @@
 
 **Version 1 · 2026-05-13**
 
-매일 09:00 KST에 나라장터(g2b.go.kr)에서 최근 5일치 "채용" 키워드 입찰공고를 자동 수집하고, GPT로 채용대행 여부 판단·핵심 정보 요약 후 등록된 수신자에게 메일 발송. 관리자 페이지에서 보관 공고 조회·수신자 관리·수동 크롤링 가능.
+매일 1회(KST, 기본 11:00) 나라장터(g2b.go.kr)에서 최근 5일치 "채용" 키워드 입찰공고를 자동 수집하고, GPT로 채용대행 여부 판단·핵심 정보 요약 후 등록된 수신자에게 메일 발송. 관리자 페이지에서 보관 공고 조회·수신자 관리·**스케줄 설정**·수동 크롤링 가능. 실행 시각/검색 윈도우는 DB `cron_settings` 단일행으로 관리한다.
 
 ---
 
 ## 1. 핵심 흐름
 
 ```
-[매일 09:00 KST]  systemd timer (g2b-daily.timer)
+[매일 hh:mm KST — DB cron_settings 단일행]  Express 인프로세스 스케줄러 (1분 tick)
         ↓
-[crawl/cron.js — 5일 윈도우 sliding]
+[crawl/cron.js — DB days_back (기본 5일) 윈도우 sliding]
 1. 검색 API 호출 (selectBidPbacScrollTypeList.do) → 최대 100건 메타
 2. DB 조회 → bid_no 비교 → 신규만 추림 (GPT 호출 전, 비용 절감)
 3. 신규만 디테일 enrich
@@ -52,7 +52,7 @@
 | 인증 | LOGIN_KEY 단순 키 + HttpOnly 쿠키 (90일) |
 | 호스팅 | AWS EC2 (Ubuntu 26.04, t3.micro + Swap 2GB) |
 | 리버스 프록시 | nginx 80 → 127.0.0.1:3001 |
-| 스케줄러 | systemd timer (cron 대체) |
+| 스케줄러 | Express 인프로세스 1분 tick (DB `cron_settings` 읽음) — 기존 systemd timer 대체 |
 
 ---
 
@@ -156,6 +156,17 @@ CREATE TABLE recipients (
   created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_active (active)
 );
+
+-- 일일 자동 실행 스케줄 (단일행, id=1 고정)
+CREATE TABLE cron_settings (
+  id          TINYINT PRIMARY KEY DEFAULT 1,
+  hour        TINYINT NOT NULL DEFAULT 11,   -- KST 0~23
+  minute      TINYINT NOT NULL DEFAULT 0,    -- 0~59
+  enabled     TINYINT(1) NOT NULL DEFAULT 1,
+  days_back   INT NOT NULL DEFAULT 5,
+  updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+-- seed: 11:00 KST, 5일 윈도우
 ```
 
 ---
@@ -209,6 +220,9 @@ PW_BROWSER_PATH=/usr/bin/google-chrome
 - `POST /api/admin/recipients` — `{email, name}`
 - `PATCH /api/admin/recipients/:id` — `{email?, name?, active?}`
 - `DELETE /api/admin/recipients/:email` — soft delete
+- `GET  /api/admin/cron-settings` — `{hour, minute, enabled, days_back, next_run_at}`
+- `PATCH /api/admin/cron-settings` — `{hour?, minute?, enabled?, days_back?}`
+- `POST /api/admin/cron-settings/run-now` — cron.js 즉시 발화 (백그라운드 spawn)
 
 ---
 
@@ -223,10 +237,16 @@ PW_BROWSER_PATH=/usr/bin/google-chrome
 
 ### systemd 유닛
 ```
-/etc/systemd/system/g2b-api.service     ← Express 데몬 (Restart=on-failure)
-/etc/systemd/system/g2b-daily.service   ← oneshot, ExecStart=node cron.js --days=5
-/etc/systemd/system/g2b-daily.timer     ← OnCalendar=*-*-* 09:00:00
+/etc/systemd/system/g2b-api.service     ← Express 데몬 (Restart=on-failure) — 인프로세스 스케줄러 포함
 ```
+
+> ⚠️ 기존 `g2b-daily.service` / `g2b-daily.timer` 는 v1.1 부터 사용하지 않습니다.
+> 운영 환경에서는 반드시 비활성화하세요:
+> ```
+> sudo systemctl disable --now g2b-daily.timer
+> sudo systemctl disable --now g2b-daily.service
+> ```
+> 스케줄은 어드민 → "스케줄 설정" 또는 DB `cron_settings` 단일행에서 관리.
 
 ### nginx
 ```
@@ -268,18 +288,18 @@ ssh -i ~/Downloads/narajangteo.pem ubuntu@54.180.150.211
 # 코드 업데이트
 cd /opt/g2b && git pull
 cd server && npm install                # 의존성 변경 시
+node migrate.js                         # cron_settings 등 신규 테이블 추가 시
 cd ../client && npm run build           # 프론트 변경 시
-sudo systemctl restart g2b-api          # API 재시작
+sudo systemctl restart g2b-api          # API 재시작 (스케줄러 포함)
 
 # 수동 cron 실행
-sudo systemctl start g2b-daily.service  # 백그라운드
-# 또는
-cd /opt/g2b/server && node cron.js --days=5
+cd /opt/g2b/server && node cron.js                # DB days_back 사용
+cd /opt/g2b/server && node cron.js --days=7       # override
+# 또는 어드민 → 스케줄 설정 → "지금 실행"
 
 # 상태 확인
-systemctl list-timers g2b-daily.timer   # 다음 자동 실행 시각
 systemctl status g2b-api
-tail -f /var/log/g2b/cron.log
+tail -f /var/log/g2b/api.log            # 스케줄러 로그 ([cron-scheduler] ...)
 ```
 
 ### Admin 접속

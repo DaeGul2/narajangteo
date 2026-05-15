@@ -7,9 +7,11 @@ import AdminDashboard from './pages/AdminDashboard.jsx'
 import AdminNotices from './pages/AdminNotices.jsx'
 import AdminNoticeDetail from './pages/AdminNoticeDetail.jsx'
 import AdminRecipients from './pages/AdminRecipients.jsx'
+import AdminCronSettings from './pages/AdminCronSettings.jsx'
 import BidEmployee from './pages/BidEmployee.jsx'
 import BidEmployeeDetail from './pages/BidEmployeeDetail.jsx'
 import BidProject from './pages/BidProject.jsx'
+import BidLab from './pages/BidLab.jsx'
 
 // ─ 좌측 drawer 메뉴 (그룹 단위로 향후 확장)
 const MENU_GROUPS = [
@@ -19,6 +21,7 @@ const MENU_GROUPS = [
       { to: '/admin', label: '대시보드', end: true },
       { to: '/admin/notices', label: '공고 목록' },
       { to: '/admin/recipients', label: '수신자 관리' },
+      { to: '/admin/cron', label: '스케줄 설정' },
       { to: '/crawl', label: '수동 크롤링' },
     ],
   },
@@ -27,6 +30,7 @@ const MENU_GROUPS = [
     items: [
       { to: '/bid/employee', label: '직원' },
       { to: '/bid/projects', label: '유사사업' },
+      { to: '/bid/lab', label: '실험실' },
     ],
   },
 ]
@@ -111,10 +115,12 @@ export default function App() {
         <Route path="/admin/notices" element={<Protected><Layout><AdminNotices /></Layout></Protected>} />
         <Route path="/admin/notices/:bidNo" element={<Protected><Layout><AdminNoticeDetail /></Layout></Protected>} />
         <Route path="/admin/recipients" element={<Protected><Layout><AdminRecipients /></Layout></Protected>} />
+        <Route path="/admin/cron" element={<Protected><Layout><AdminCronSettings /></Layout></Protected>} />
         <Route path="/crawl" element={<Protected><Layout><Crawl /></Layout></Protected>} />
         <Route path="/bid/employee" element={<Protected><Layout><BidEmployee /></Layout></Protected>} />
         <Route path="/bid/employee/:id" element={<Protected><Layout><BidEmployeeDetail /></Layout></Protected>} />
         <Route path="/bid/projects" element={<Protected><Layout><BidProject /></Layout></Protected>} />
+        <Route path="/bid/lab" element={<Protected><Layout><BidLab /></Layout></Protected>} />
         <Route path="*" element={<Navigate to="/admin" replace />} />
       </Routes>
     </BrowserRouter>

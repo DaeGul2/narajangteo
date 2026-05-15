@@ -54,6 +54,19 @@ CREATE TABLE IF NOT EXISTS recipients (
   INDEX idx_active (active)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 일일 cron 스케줄 (단일행, id=1 고정)
+CREATE TABLE IF NOT EXISTS cron_settings (
+  id          TINYINT      NOT NULL PRIMARY KEY DEFAULT 1,
+  hour        TINYINT      NOT NULL DEFAULT 11,   -- 0~23 (KST)
+  minute      TINYINT      NOT NULL DEFAULT 0,    -- 0~59
+  enabled     TINYINT(1)   NOT NULL DEFAULT 1,
+  days_back   INT          NOT NULL DEFAULT 5,
+  updated_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+INSERT IGNORE INTO cron_settings (id, hour, minute, enabled, days_back)
+VALUES (1, 11, 0, 1, 5);
+
 -- 입찰 참여 인력
 CREATE TABLE IF NOT EXISTS bid_employees (
   id                  INT AUTO_INCREMENT PRIMARY KEY,

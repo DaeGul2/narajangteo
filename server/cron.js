@@ -21,7 +21,7 @@ import { summarize } from './lib/summarize.js';
 import { classifyBatch } from './lib/aiClassify.js';
 import { buildReportMarkdown, markdownToHtml } from './lib/report.js';
 import { sendReport } from './lib/email.js';
-import { existsBidNos, insertNotice, startCronRun, finishCronRun, getActiveRecipients } from './lib/db.js';
+import { existsBidNos, insertNotice, startCronRun, finishCronRun, getActiveRecipients, getCronSettings } from './lib/db.js';
 import { saveFiles } from './lib/fileStore.js';
 import archiver from 'archiver';
 import { Writable } from 'node:stream';
@@ -94,7 +94,20 @@ async function pipelinePerNotice(it) {
 }
 
 async function main() {
-  const daysBack = Number(arg('days', '30'));
+  // --days 명시 시 우선, 아니면 DB cron_settings.days_back, 그래도 없으면 5
+  let daysBack;
+  const argDays = arg('days', null);
+  if (argDays != null) {
+    daysBack = Number(argDays);
+  } else {
+    try {
+      const s = await getCronSettings();
+      daysBack = Number(s.days_back) || 5;
+    } catch (e) {
+      console.log(`[cron] cron_settings 조회 실패 — 기본 5일 사용 (${e.message})`);
+      daysBack = 5;
+    }
+  }
   const cronId = await startCronRun();
   let status = 'failed';
   let totalFound = 0;

@@ -58,6 +58,47 @@ export async function insertNotice(rec) {
   await pool.execute(sql, params);
 }
 
+// cron 스케줄 (단일행 id=1)
+export async function getCronSettings() {
+  const [rows] = await pool.query(
+    `SELECT id, hour, minute, enabled, days_back, updated_at FROM cron_settings WHERE id = 1`
+  );
+  if (rows[0]) return rows[0];
+  // 행이 없으면 기본값 생성
+  await pool.execute(
+    `INSERT IGNORE INTO cron_settings (id, hour, minute, enabled, days_back) VALUES (1, 11, 0, 1, 5)`
+  );
+  const [r2] = await pool.query(
+    `SELECT id, hour, minute, enabled, days_back, updated_at FROM cron_settings WHERE id = 1`
+  );
+  return r2[0];
+}
+
+export async function updateCronSettings({ hour, minute, enabled, days_back }) {
+  const sets = [];
+  const params = [];
+  if (hour !== undefined) {
+    const h = Number(hour);
+    if (!Number.isInteger(h) || h < 0 || h > 23) throw new Error('hour 는 0~23');
+    sets.push('hour = ?'); params.push(h);
+  }
+  if (minute !== undefined) {
+    const m = Number(minute);
+    if (!Number.isInteger(m) || m < 0 || m > 59) throw new Error('minute 는 0~59');
+    sets.push('minute = ?'); params.push(m);
+  }
+  if (enabled !== undefined) {
+    sets.push('enabled = ?'); params.push(enabled ? 1 : 0);
+  }
+  if (days_back !== undefined) {
+    const d = Number(days_back);
+    if (!Number.isInteger(d) || d < 1 || d > 90) throw new Error('days_back 는 1~90');
+    sets.push('days_back = ?'); params.push(d);
+  }
+  if (!sets.length) return;
+  await pool.execute(`UPDATE cron_settings SET ${sets.join(', ')} WHERE id = 1`, params);
+}
+
 // cron 실행 로그
 export async function startCronRun() {
   const [r] = await pool.execute(
