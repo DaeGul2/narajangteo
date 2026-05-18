@@ -17,7 +17,7 @@ const SCOPE_QUERIES = {
     SELECT employee_id, name, acquired_at, issuer, cert_number
     FROM bid_employee_certifications ORDER BY employee_id, sort_order, id`,
   projects: `
-    SELECT id, name, agency, start_date, end_date, contract_amount, description
+    SELECT id, name, agency, start_date, end_date, contract_amount, actual_amount, description
     FROM bid_projects ORDER BY COALESCE(start_date, '0000-00-00') DESC, id DESC`,
   employee_projects: `
     SELECT employee_id, project_id, role, company_at_time, participation_rate

@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS bid_projects (
   start_date      DATE,
   end_date        DATE,
   contract_amount BIGINT,                             -- 계약금액 (원)
+  actual_amount   BIGINT,                             -- 실적금액 (원)
   description     TEXT,
   created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

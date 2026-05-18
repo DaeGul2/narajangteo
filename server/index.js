@@ -30,8 +30,11 @@ import pool, {
   getCronSettings, updateCronSettings,
 } from './lib/db.js';
 import { listFiles, readFile } from './lib/fileStore.js';
-import { parsePages } from './lib/labParse.js';
+import { renderToSession, getCachedPdf, getCachedSession } from './lib/labRender.js';
 import { generateFromTemplate } from './lib/labGenerate.js';
+import { openHwp, extractTree } from './lib/labTree.js';
+import { replicateForEmployee, replicateInOneFile } from './lib/labReplicate.js';
+import { createJob, updateJob, getJob, jobStatus } from './lib/labBulkJobs.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3001;
@@ -295,6 +298,20 @@ app.post('/api/admin/bid-employees/:empId/projects', requireAuth, async (req, re
     res.json({ ok: true, id });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
+// 프로젝트 컨텍스트에서 참여자 추가 — 직원 페이지 안 들어가도 등록 가능
+app.post('/api/admin/bid-projects/:projId/employees', requireAuth, async (req, res) => {
+  try {
+    const projId = Number(req.params.projId);
+    if (!projId) return res.status(400).json({ error: 'invalid projId' });
+    const { employee_id, role, company_at_time, participation_rate } = req.body || {};
+    if (!employee_id) return res.status(400).json({ error: 'employee_id 필수' });
+    const id = await addEmployeeProject(Number(employee_id), {
+      project_id: projId, role, company_at_time, participation_rate,
+    });
+    res.json({ ok: true, id });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
 app.patch('/api/admin/bid-emp-projects/:id', requireAuth, async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -312,7 +329,7 @@ app.delete('/api/admin/bid-emp-projects/:id', requireAuth, async (req, res) => {
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
-// ─── 실험실 — hwp/hwpx 페이지 분할 + GPT 생성 ───
+// ─── 실험실 — hwp/hwpx → LibreOffice → PDF → 페이지 미리보기 + GPT 생성 ───
 // 업로드 raw binary. 클라이언트가 ?filename=foo.hwp 로 확장자 알려줌
 app.post(
   '/api/admin/lab/parse',
@@ -323,14 +340,24 @@ app.post(
       const filename = String(req.query.filename || '');
       if (!filename) return res.status(400).json({ error: 'filename 쿼리 필요' });
       if (!req.body || !req.body.length) return res.status(400).json({ error: '본문(파일) 비어 있음' });
-      const pages = await parsePages(req.body, filename);
-      res.json({ filename, pages });
+      const { sid, pages, pageCount } = await renderToSession(req.body, filename);
+      res.json({ filename, sid, pageCount, pages });
     } catch (e) {
       console.error('[lab/parse]', e);
       res.status(500).json({ error: e.message });
     }
   }
 );
+
+// PDF 바이너리 — 클라이언트 pdfjs 가 fetch 해서 직접 렌더
+app.get('/api/admin/lab/pdf/:sid', requireAuth, (req, res) => {
+  const item = getCachedPdf(req.params.sid);
+  if (!item) return res.status(404).json({ error: '세션 만료 또는 없음 — 파일을 다시 올려주세요' });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Cache-Control', 'private, max-age=900');
+  res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(item.filename)}.pdf"`);
+  res.end(item.buf);
+});
 
 app.post('/api/admin/lab/generate', requireAuth, async (req, res) => {
   try {
@@ -339,6 +366,130 @@ app.post('/api/admin/lab/generate', requireAuth, async (req, res) => {
     res.json({ result: out });
   } catch (e) {
     console.error('[lab/generate]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 트리 JSON — 디버그/검증용
+app.get('/api/admin/lab/tree/:sid', requireAuth, async (req, res) => {
+  try {
+    const item = getCachedSession(req.params.sid);
+    if (!item) return res.status(404).json({ error: '세션 만료 — 파일을 다시 올려주세요' });
+    const doc = await openHwp(item.hwpBuf);
+    const tree = await extractTree(doc);
+    res.json({ filename: item.filename, tree });
+  } catch (e) {
+    console.error('[lab/tree]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 직원 선택용 리스트
+app.get('/api/admin/lab/employees', requireAuth, async (_req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT id, name, position FROM bid_employees WHERE active = 1 ORDER BY name`
+    );
+    res.json({ employees: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 배치 시작 — N명을 단일 .hwp 안에 차례로. 즉시 jobId 반환, 백그라운드 처리.
+app.post('/api/admin/lab/replicate-bulk', requireAuth, async (req, res) => {
+  try {
+    const { sid, employeeIds, instruction } = req.body || {};
+    if (!sid) return res.status(400).json({ error: 'sid 필요' });
+    if (!Array.isArray(employeeIds) || employeeIds.length === 0) {
+      return res.status(400).json({ error: 'employeeIds 비어 있음' });
+    }
+    const item = getCachedSession(sid);
+    if (!item) return res.status(404).json({ error: '세션 만료 — 파일을 다시 올려주세요' });
+
+    const jobId = createJob(employeeIds.length);
+    res.json({ jobId, total: employeeIds.length });
+
+    (async () => {
+      try {
+        updateJob(jobId, { phase: 'processing' });
+        const { hwpBytes, successNames, failed } = await replicateInOneFile({
+          hwpBuf: item.hwpBuf,
+          employeeIds: employeeIds.map(Number),
+          instruction: instruction || '',
+          onProgress: ({ current, total, currentName, phase, stage }) => {
+            updateJob(jobId, {
+              current, total, currentName,
+              phase: phase || 'processing',
+              stage: stage || '',
+            });
+          },
+        });
+        updateJob(jobId, {
+          phase: 'done',
+          zipBuf: hwpBytes, // 호환 — jobs 스토어가 zipBuf 로 받음. 실제로는 .hwp 바이트
+          successNames,
+          failed,
+          currentName: '',
+          templateName: item.filename,
+        });
+      } catch (e) {
+        console.error('[lab/replicate-bulk worker]', e);
+        updateJob(jobId, { phase: 'error', error: e.message });
+      }
+    })();
+  } catch (e) {
+    console.error('[lab/replicate-bulk]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/admin/lab/replicate-bulk/:jobId', requireAuth, (req, res) => {
+  const s = jobStatus(req.params.jobId);
+  if (!s) return res.status(404).json({ error: 'job 없음 또는 만료' });
+  res.json(s);
+});
+
+app.get('/api/admin/lab/replicate-bulk/:jobId/download', requireAuth, (req, res) => {
+  const j = getJob(req.params.jobId);
+  if (!j) return res.status(404).json({ error: 'job 없음 또는 만료' });
+  if (j.phase !== 'done') return res.status(409).json({ error: `아직 끝나지 않음 (phase=${j.phase})` });
+  if (!j.zipBuf || j.zipBuf.length === 0) return res.status(404).json({ error: '생성된 파일 없음 (모두 실패)' });
+
+  const base = (j.templateName || 'template').replace(/\.(hwp|hwpx)$/i, '');
+  const stamp = new Date().toISOString().slice(0, 10);
+  const outName = `${base}_복제_${stamp}.hwp`;
+  res.setHeader('Content-Type', 'application/x-hwp');
+  res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(outName)}"`);
+  res.end(j.zipBuf);
+});
+
+// 한 명용 .hwp 생성 + 다운로드
+app.post('/api/admin/lab/replicate', requireAuth, async (req, res) => {
+  try {
+    const { sid, employeeId, instruction } = req.body || {};
+    if (!sid) return res.status(400).json({ error: 'sid 필요' });
+    if (!employeeId) return res.status(400).json({ error: 'employeeId 필요' });
+    const item = getCachedSession(sid);
+    if (!item) return res.status(404).json({ error: '세션 만료 — 파일을 다시 올려주세요' });
+
+    const { hwpBytes, summary } = await replicateForEmployee({
+      hwpBuf: item.hwpBuf,
+      employeeId: Number(employeeId),
+      instruction: instruction || '',
+    });
+
+    const base = (item.filename || 'template').replace(/\.(hwp|hwpx)$/i, '');
+    const outName = `${base}_${summary.employeeName || employeeId}.hwp`;
+    res.setHeader('Content-Type', 'application/x-hwp');
+    res.setHeader('X-Replicate-Summary', encodeURIComponent(JSON.stringify(summary)));
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${encodeURIComponent(outName)}"`
+    );
+    res.end(hwpBytes);
+  } catch (e) {
+    console.error('[lab/replicate]', e);
     res.status(500).json({ error: e.message });
   }
 });

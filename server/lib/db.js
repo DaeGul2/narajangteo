@@ -261,7 +261,7 @@ export const certificationsCrud = makeCrud(
 );
 
 // ─── 유사사업 마스터 ───
-const PROJECT_FIELDS = ['name','agency','start_date','end_date','contract_amount','description'];
+const PROJECT_FIELDS = ['name','agency','start_date','end_date','contract_amount','actual_amount','description'];
 
 export async function listProjects() {
   const [rows] = await pool.query(
@@ -285,6 +285,7 @@ export async function addProject(payload) {
        start_date = COALESCE(VALUES(start_date), start_date),
        end_date   = COALESCE(VALUES(end_date), end_date),
        contract_amount = COALESCE(VALUES(contract_amount), contract_amount),
+       actual_amount   = COALESCE(VALUES(actual_amount), actual_amount),
        description = COALESCE(VALUES(description), description),
        id = LAST_INSERT_ID(id)`,
     params
@@ -314,7 +315,7 @@ export async function listEmployeeProjects(employeeId) {
     `SELECT
        ep.id, ep.employee_id, ep.project_id, ep.role, ep.company_at_time, ep.participation_rate,
        p.name AS project_name, p.agency, p.start_date, p.end_date,
-       p.contract_amount, p.description,
+       p.contract_amount, p.actual_amount, p.description,
        ep.created_at, ep.updated_at
      FROM bid_employee_projects ep
      JOIN bid_projects p ON p.id = ep.project_id
