@@ -12,6 +12,9 @@ import BidEmployee from './pages/BidEmployee.jsx'
 import BidEmployeeDetail from './pages/BidEmployeeDetail.jsx'
 import BidProject from './pages/BidProject.jsx'
 import BidLab from './pages/BidLab.jsx'
+import AttendanceLab from './pages/AttendanceLab.jsx'
+import AttendanceReport from './pages/AttendanceReport.jsx'
+import AttendanceHolidays from './pages/AttendanceHolidays.jsx'
 
 // ─ 좌측 drawer 메뉴 (그룹 단위로 향후 확장)
 const MENU_GROUPS = [
@@ -31,6 +34,14 @@ const MENU_GROUPS = [
       { to: '/bid/employee', label: '직원' },
       { to: '/bid/projects', label: '유사사업' },
       { to: '/bid/lab', label: '실험실' },
+    ],
+  },
+  {
+    title: '출퇴근 관리',
+    items: [
+      { to: '/attendance/report', label: '리포트' },
+      { to: '/attendance/holidays', label: '공휴일 캘린더' },
+      { to: '/attendance/lab', label: '실험실' },
     ],
   },
 ]
@@ -121,6 +132,9 @@ export default function App() {
         <Route path="/bid/employee/:id" element={<Protected><Layout><BidEmployeeDetail /></Layout></Protected>} />
         <Route path="/bid/projects" element={<Protected><Layout><BidProject /></Layout></Protected>} />
         <Route path="/bid/lab" element={<Protected><Layout><BidLab /></Layout></Protected>} />
+        <Route path="/attendance/lab" element={<Protected><Layout><AttendanceLab /></Layout></Protected>} />
+        <Route path="/attendance/report" element={<Protected><Layout><AttendanceReport /></Layout></Protected>} />
+        <Route path="/attendance/holidays" element={<Protected><Layout><AttendanceHolidays /></Layout></Protected>} />
         <Route path="*" element={<Navigate to="/admin" replace />} />
       </Routes>
     </BrowserRouter>

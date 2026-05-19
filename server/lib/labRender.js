@@ -12,22 +12,69 @@ import { spawn } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import crypto from 'node:crypto';
 import { chromium } from 'playwright';
 
-const TTL_MS = 30 * 60 * 1000;
+const TTL_MS = 4 * 60 * 60 * 1000; // 4시간
 const _cache = new Map(); // sid -> { pdfBuf, hwpBuf, filename, ts }
+
+// 디스크 캐시 — 서버 재시작 (특히 node --watch) 에도 세션 유지
+const CACHE_DIR = path.join(os.tmpdir(), 'g2b-lab-cache');
+function _ensureDir() {
+  try { fsSync.mkdirSync(CACHE_DIR, { recursive: true }); } catch {}
+}
+function _diskPath(sid, kind) {
+  return path.join(CACHE_DIR, `${sid}.${kind}`);
+}
+async function _writeDisk(sid, filename, hwpBuf, pdfBuf) {
+  _ensureDir();
+  await fs.writeFile(_diskPath(sid, 'hwp'), hwpBuf);
+  await fs.writeFile(_diskPath(sid, 'pdf'), pdfBuf);
+  await fs.writeFile(_diskPath(sid, 'meta.json'), JSON.stringify({ filename, ts: Date.now() }));
+}
+function _gcDisk() {
+  try {
+    _ensureDir();
+    const now = Date.now();
+    for (const f of fsSync.readdirSync(CACHE_DIR)) {
+      if (!f.endsWith('.meta.json')) continue;
+      try {
+        const meta = JSON.parse(fsSync.readFileSync(path.join(CACHE_DIR, f), 'utf-8'));
+        if (now - meta.ts > TTL_MS) {
+          const sid = f.replace('.meta.json', '');
+          for (const ext of ['hwp', 'pdf', 'meta.json']) {
+            try { fsSync.unlinkSync(_diskPath(sid, ext)); } catch {}
+          }
+        }
+      } catch {}
+    }
+  } catch {}
+}
 
 function gc() {
   const now = Date.now();
   for (const [k, v] of _cache.entries()) {
     if (now - v.ts > TTL_MS) _cache.delete(k);
   }
+  _gcDisk();
 }
 
 export function getCachedSession(sid) {
   gc();
-  return _cache.get(sid) || null;
+  const inMem = _cache.get(sid);
+  if (inMem) return inMem;
+  // 메모리에 없으면 디스크에서 (재시작 후) — synchronous fallback
+  try {
+    const metaRaw = fsSync.readFileSync(_diskPath(sid, 'meta.json'), 'utf-8');
+    const meta = JSON.parse(metaRaw);
+    if (Date.now() - meta.ts > TTL_MS) return null;
+    const hwpBuf = fsSync.readFileSync(_diskPath(sid, 'hwp'));
+    const pdfBuf = fsSync.readFileSync(_diskPath(sid, 'pdf'));
+    const entry = { hwpBuf, pdfBuf, filename: meta.filename, ts: meta.ts };
+    _cache.set(sid, entry);
+    return entry;
+  } catch { return null; }
 }
 
 // 호환용 — 기존 PDF 다운로드 엔드포인트가 사용
@@ -177,12 +224,15 @@ export async function renderToSession(buf, filename) {
   const pdf = await hwpToPdf(buf, filename);
   const pages = await pdfToPageTexts(pdf);
   const sid = crypto.randomBytes(12).toString('hex');
+  const hwpBuf = Buffer.from(buf);
   _cache.set(sid, {
     pdfBuf: pdf,
-    hwpBuf: Buffer.from(buf), // 트리 추출·재조립용 원본 hwp
+    hwpBuf, // 트리 추출·재조립용 원본 hwp
     filename,
     ts: Date.now(),
   });
+  // 디스크에도 백업 — 서버 재시작 (node --watch 등) 에도 세션 유지
+  _writeDisk(sid, filename, hwpBuf, pdf).catch(e => console.warn('[lab] disk cache write fail:', e.message));
   gc();
   return { sid, pages, pageCount: pages.length };
 }

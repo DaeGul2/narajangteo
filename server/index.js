@@ -33,8 +33,16 @@ import { listFiles, readFile } from './lib/fileStore.js';
 import { renderToSession, getCachedPdf, getCachedSession } from './lib/labRender.js';
 import { generateFromTemplate } from './lib/labGenerate.js';
 import { openHwp, extractTree } from './lib/labTree.js';
-import { replicateForEmployee, replicateInOneFile } from './lib/labReplicate.js';
+import { extractFields, extractListTables } from './lib/labFieldExtract.js';
+import { replicateForEmployee, replicateInOneFile, replicateInOneFileByFields } from './lib/labReplicate.js';
 import { createJob, updateJob, getJob, jobStatus } from './lib/labBulkJobs.js';
+import { crawlAttendance } from './lib/attendanceCrawler.js';
+import {
+  getSecret, setSecret,
+  listAttendanceSnapshots, getAttendanceSnapshot, deleteAttendanceSnapshot,
+  updateAttendanceRecord, getAttendanceReport,
+  listHolidays, addHoliday, deleteHoliday, recomputeAllAttendanceJudgments,
+} from './lib/db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3001;
@@ -384,6 +392,22 @@ app.get('/api/admin/lab/tree/:sid', requireAuth, async (req, res) => {
   }
 });
 
+// 필드 자동 추출 — 라벨/값 쌍을 찾아서 클라가 X 로 제거하거나 매핑 지정
+app.get('/api/admin/lab/fields/:sid', requireAuth, async (req, res) => {
+  try {
+    const item = getCachedSession(req.params.sid);
+    if (!item) return res.status(404).json({ error: '세션 만료 — 파일을 다시 올려주세요' });
+    const doc = await openHwp(item.hwpBuf);
+    const tree = await extractTree(doc);
+    const fields = extractFields(tree);
+    const listTables = extractListTables(tree);
+    res.json({ filename: item.filename, fields, listTables });
+  } catch (e) {
+    console.error('[lab/fields]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // 직원 선택용 리스트
 app.get('/api/admin/lab/employees', requireAuth, async (_req, res) => {
   try {
@@ -399,37 +423,53 @@ app.get('/api/admin/lab/employees', requireAuth, async (_req, res) => {
 // 배치 시작 — N명을 단일 .hwp 안에 차례로. 즉시 jobId 반환, 백그라운드 처리.
 app.post('/api/admin/lab/replicate-bulk', requireAuth, async (req, res) => {
   try {
-    const { sid, employeeIds, instruction } = req.body || {};
+    const { sid, employeeIds, instruction, mode = 'free', userFields, userListTables } = req.body || {};
     if (!sid) return res.status(400).json({ error: 'sid 필요' });
     if (!Array.isArray(employeeIds) || employeeIds.length === 0) {
       return res.status(400).json({ error: 'employeeIds 비어 있음' });
+    }
+    if (mode === 'fields' && (!Array.isArray(userFields) || userFields.length === 0)) {
+      return res.status(400).json({ error: '필드 모드인데 userFields 가 비어 있음' });
     }
     const item = getCachedSession(sid);
     if (!item) return res.status(404).json({ error: '세션 만료 — 파일을 다시 올려주세요' });
 
     const jobId = createJob(employeeIds.length);
-    res.json({ jobId, total: employeeIds.length });
+    res.json({ jobId, total: employeeIds.length, mode });
 
     (async () => {
       try {
         updateJob(jobId, { phase: 'processing' });
-        const { hwpBytes, successNames, failed } = await replicateInOneFile({
-          hwpBuf: item.hwpBuf,
-          employeeIds: employeeIds.map(Number),
-          instruction: instruction || '',
-          onProgress: ({ current, total, currentName, phase, stage }) => {
-            updateJob(jobId, {
-              current, total, currentName,
-              phase: phase || 'processing',
-              stage: stage || '',
-            });
-          },
-        });
+        const onProgress = ({ current, total, currentName, phase, stage }) => {
+          updateJob(jobId, {
+            current, total, currentName,
+            phase: phase || 'processing',
+            stage: stage || '',
+          });
+        };
+
+        let result;
+        if (mode === 'fields') {
+          result = await replicateInOneFileByFields({
+            hwpBuf: item.hwpBuf,
+            employeeIds: employeeIds.map(Number),
+            userFields,
+            userListTables,
+            onProgress,
+          });
+        } else {
+          result = await replicateInOneFile({
+            hwpBuf: item.hwpBuf,
+            employeeIds: employeeIds.map(Number),
+            instruction: instruction || '',
+            onProgress,
+          });
+        }
         updateJob(jobId, {
           phase: 'done',
-          zipBuf: hwpBytes, // 호환 — jobs 스토어가 zipBuf 로 받음. 실제로는 .hwp 바이트
-          successNames,
-          failed,
+          zipBuf: result.hwpBytes, // 호환 — jobs 스토어가 zipBuf 로 받음. 실제로는 .hwp 바이트
+          successNames: result.successNames,
+          failed: result.failed,
           currentName: '',
           templateName: item.filename,
         });
@@ -512,6 +552,146 @@ app.patch('/api/admin/cron-settings', requireAuth, async (req, res) => {
     res.status(400).json({ error: e.message });
   }
 });
+// ─── 출퇴근 관리 — 메일플러그 크롤 ───
+// mode='cookie' : DB의 mailplug_cookies 주입해서 출퇴근 페이지 접근. (권장)
+// mode='auto'   : 영구 프로파일 + 세션 살아있어야 함 (deprecated)
+// mode='setup'  : 빈 크롬 띄움 (deprecated, Cloudflare 차단 가능성 큼)
+app.post('/api/admin/attendance/crawl', requireAuth, async (req, res) => {
+  try {
+    const { mode = 'cookie' } = req.body || {};
+    const result = await crawlAttendance({ mode });
+    res.json(result);
+  } catch (e) {
+    console.error('[attendance/crawl]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 쿠키 저장 — 사용자가 본인 Chrome 에서 복사한 Cookie 헤더 문자열
+app.post('/api/admin/attendance/cookies', requireAuth, async (req, res) => {
+  try {
+    const { cookie, note } = req.body || {};
+    if (!cookie || typeof cookie !== 'string' || cookie.length < 10) {
+      return res.status(400).json({ error: '쿠키 문자열이 비어있거나 너무 짧음' });
+    }
+    await setSecret('mailplug_cookies', cookie.trim(), note || null);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[attendance/cookies POST]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 출퇴근 스냅샷 — 목록
+app.get('/api/admin/attendance/snapshots', requireAuth, async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit || 50), 200);
+    const items = await listAttendanceSnapshots(limit);
+    res.json({ items });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// 단건 — 메타 + 12컬럼 row 전체
+app.get('/api/admin/attendance/snapshots/:id', requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'invalid id' });
+    const data = await getAttendanceSnapshot(id);
+    if (!data) return res.status(404).json({ error: '없음' });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/admin/attendance/snapshots/:id', requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'invalid id' });
+    await deleteAttendanceSnapshot(id);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 공휴일 캘린더 — CRUD
+app.get('/api/admin/holidays', requireAuth, async (_req, res) => {
+  try { res.json({ items: await listHolidays() }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/holidays', requireAuth, async (req, res) => {
+  try {
+    const { date, name } = req.body || {};
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '')) return res.status(400).json({ error: 'date 형식 (YYYY-MM-DD)' });
+    if (!name) return res.status(400).json({ error: 'name 필요' });
+    await addHoliday(date, name, 'manual');
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/admin/holidays/:date', requireAuth, async (req, res) => {
+  try {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(req.params.date)) return res.status(400).json({ error: 'date 형식' });
+    await deleteHoliday(req.params.date);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// 공휴일 변경 후 일괄 재평가 (manual_override=0 만)
+app.post('/api/admin/attendance/recompute', requireAuth, async (_req, res) => {
+  try { res.json(await recomputeAllAttendanceJudgments()); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 기간별 출퇴근 리포트
+app.get('/api/admin/attendance/report', requireAuth, async (req, res) => {
+  try {
+    const { from, to } = req.query || {};
+    if (!from || !to) return res.status(400).json({ error: 'from / to (YYYY-MM-DD) 필수' });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+      return res.status(400).json({ error: '날짜 형식 오류' });
+    }
+    const data = await getAttendanceReport(from, to);
+    res.json(data);
+  } catch (e) {
+    console.error('[attendance/report]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 지각 판정 수정 — { is_late?: 0|1|null, manual_note?: string, reset?: true }
+app.patch('/api/admin/attendance/records/:id', requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'invalid id' });
+    const { is_late, manual_note, reset } = req.body || {};
+    const patch = {};
+    if (reset) patch.reset = true;
+    else {
+      if (is_late !== undefined) {
+        if (is_late !== null && is_late !== 0 && is_late !== 1) {
+          return res.status(400).json({ error: 'is_late 은 0 / 1 / null 만 가능' });
+        }
+        patch.is_late = is_late;
+      }
+      if (manual_note !== undefined) patch.manual_note = manual_note;
+    }
+    const result = await updateAttendanceRecord(id, patch);
+    if (!result) return res.status(404).json({ error: 'record not found' });
+    res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 쿠키 등록 상태 (값은 노출 X)
+app.get('/api/admin/attendance/cookies', requireAuth, async (_req, res) => {
+  try {
+    const s = await getSecret('mailplug_cookies');
+    if (!s) return res.json({ registered: false });
+    res.json({
+      registered: true,
+      length: s.v.length,
+      updated_at: s.updated_at,
+      last_used_at: s.last_used_at,
+      note: s.note,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/admin/cron-settings/run-now', requireAuth, async (_req, res) => {
   try {
     const s = await getCronSettings();

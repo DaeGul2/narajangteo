@@ -106,9 +106,123 @@ const S = {
   progressFill: (pct, color = '#1d4ed8') => ({
     height: '100%', background: color, width: `${pct}%`, transition: 'width .25s ease',
   }),
+  orderList: {
+    display: 'flex', flexDirection: 'column', gap: 4,
+    background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: 8,
+    maxHeight: 320, overflow: 'auto',
+  },
+  orderItem: (dragging) => ({
+    display: 'flex', alignItems: 'center', gap: 10,
+    padding: '8px 10px',
+    background: dragging ? '#dbeafe' : '#f8fafc',
+    border: `1px solid ${dragging ? '#1d4ed8' : '#e5e7eb'}`,
+    borderRadius: 6, fontSize: 13, color: '#0f172a',
+    opacity: dragging ? 0.6 : 1,
+    cursor: 'move', userSelect: 'none',
+  }),
+  orderHandle: {
+    color: '#94a3b8', fontWeight: 900, fontSize: 14, cursor: 'grab',
+    letterSpacing: -2, paddingRight: 2,
+  },
+  orderNum: {
+    display: 'inline-block', minWidth: 22, textAlign: 'center',
+    background: '#1d4ed8', color: '#fff', borderRadius: 4,
+    fontSize: 11, fontWeight: 700, padding: '2px 4px',
+  },
+  orderRemove: {
+    width: 24, height: 24, borderRadius: 12,
+    border: '1px solid #e5e7eb', background: '#fff',
+    fontSize: 16, lineHeight: '20px', color: '#64748b',
+    cursor: 'pointer', padding: 0,
+  },
+  fieldsGrid: {
+    display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 10,
+  },
+  fieldCard: (removed) => ({
+    position: 'relative',
+    background: removed ? '#f1f5f9' : '#fff',
+    border: `1px solid ${removed ? '#cbd5e1' : '#e5e7eb'}`,
+    borderRadius: 8,
+    padding: '10px 12px',
+    fontSize: 12,
+    opacity: removed ? 0.55 : 1,
+    transition: 'opacity .12s ease, background .12s ease',
+  }),
+  fieldLabel: {
+    fontWeight: 700, color: '#0f172a', fontSize: 12,
+    display: 'inline-block',
+    padding: '2px 8px', borderRadius: 4,
+    background: '#eff6ff', color2: '#1d4ed8',
+  },
+  fieldValueRow: {
+    marginTop: 6, color: '#475569',
+    display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
+  },
+  fieldArrow: { color: '#94a3b8', fontWeight: 700 },
+  fieldValue: {
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    fontSize: 11, color: '#0f172a',
+    background: '#f8fafc', padding: '2px 6px', borderRadius: 4,
+    maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+  },
+  fieldEmpty: {
+    fontStyle: 'italic', color: '#94a3b8', fontSize: 11,
+  },
+  fieldXBtn: {
+    position: 'absolute', top: 6, right: 6,
+    width: 22, height: 22, borderRadius: 11,
+    border: '1px solid #e5e7eb', background: '#fff',
+    fontSize: 13, lineHeight: '18px', color: '#64748b',
+    cursor: 'pointer', padding: 0,
+  },
 }
 
 const THUMB_DPR = Math.min(window.devicePixelRatio || 1, 2)
+
+// 매핑 가능한 employee 컬럼 + 계산필드. 라벨 자동 추론용 사전.
+const MAPPABLE_COLUMNS = [
+  { key: 'name',                label: 'DB · 이름' },
+  { key: 'position',            label: 'DB · 직위' },
+  { key: 'major',               label: 'DB · 전공' },
+  { key: 'school',              label: 'DB · 학교' },
+  { key: 'final_edu',           label: 'DB · 최종학력' },
+  { key: 'birth_date',          label: 'DB · 생년월일' },
+  { key: 'external_join_date',  label: 'DB · 외부용 입사일' },
+  { key: 'real_join_date',      label: 'DB · 실제 입사일' },
+  { key: '해당분야_근무경력',    label: 'DB · 해당분야 근무경력 (계산)' },
+]
+// 라벨 텍스트 → 기본 컬럼 추론
+const LABEL_TO_COLUMN = {
+  '성명': 'name', '이름': 'name', '성 명': 'name',
+  '직위': 'position', '직책': 'position',
+  '전공': 'major',
+  '학교': 'school', '학교명': 'school',
+  '학력': 'final_edu', '최종학력': 'final_edu',
+  '출생년월': 'birth_date', '생년월일': 'birth_date', '생 년 월 일': 'birth_date',
+  '해당분야 근무경력': '해당분야_근무경력',
+  '해당분야근무경력': '해당분야_근무경력',
+  '근무경력': '해당분야_근무경력',
+  '경력': '해당분야_근무경력',
+}
+// List 표 column header 매핑 후보 (projects + 계산 + employee 직위 fallback)
+const PROJECT_COLUMNS = [
+  { key: 'project_name',       label: 'projects · 사업명' },
+  { key: 'agency',             label: 'projects · 발주처' },
+  { key: '__period',           label: '계산 · 참여기간 (yy.mm~yy.mm)' },
+  { key: 'role',               label: 'projects · 담당업무 (role)' },
+  { key: 'company_at_time',    label: 'projects · 참여당시 소속' },
+  { key: '__emp_position',     label: '직원 · 현재 직위 (fallback)' },
+  { key: 'contract_amount',    label: 'projects · 계약금액' },
+  { key: 'actual_amount',      label: 'projects · 실적금액' },
+  { key: 'participation_rate', label: 'projects · 참여율' },
+  { key: 'description',        label: 'projects · 비고' },
+]
+const inferDefaultMapping = (label) => {
+  const compact = String(label || '').replace(/\s+/g, '')
+  const direct = LABEL_TO_COLUMN[label] || LABEL_TO_COLUMN[compact]
+  if (direct) return { type: 'column', column: direct }
+  return { type: 'auto' }
+}
 
 const STAGE_LABELS = {
   openHwp: 'hwp 로드',
@@ -133,9 +247,18 @@ export default function BidLab() {
 
   // 직원 + 한글 생성
   const [employees, setEmployees] = useState([])
-  const [selectedIds, setSelectedIds] = useState(() => new Set())
+  const [selectedIds, setSelectedIds] = useState([]) // 순서 보존을 위해 배열
+  const [dragIdx, setDragIdx] = useState(null)       // 드래그 중인 항목 index
   const [instruction, setInstruction] = useState('')
   const [job, setJob] = useState(null) // { jobId, phase, current, total, currentName, ... }
+
+  // 필드 — 업로드 시 자동 추출. [{ id, label, currentValue, removed, mapping? }]
+  const [fields, setFields] = useState([])
+  // List 표 — [{ id, headers: [{ col, label, key, removed }], dataRowCount, removed }]
+  const [listTables, setListTables] = useState([])
+  const [fieldsBusy, setFieldsBusy] = useState(false)
+  // 매핑 모드 — 'free' (GPT 자동) | 'fields' (필드 수동 매핑, GPT 우회)
+  const [mode, setMode] = useState('free')
 
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
@@ -155,24 +278,53 @@ export default function BidLab() {
         if (r.ok) {
           const emps = j.employees || []
           setEmployees(emps)
-          setSelectedIds(new Set(emps.map(e => e.id)))
+          setSelectedIds(emps.map(e => e.id))
         }
       } catch {}
     })()
   }, [])
 
-  // 진행률 polling — job 이 처리중일 때만 1초마다
+  // 진행률 polling — 400ms 마다. 단계 변화 추적해서 stage 경과시간 계산
   useEffect(() => {
     if (!job?.jobId) return
     if (job.phase === 'done' || job.phase === 'error') return
     const t = setInterval(async () => {
       try {
         const r = await authFetch(`/api/admin/lab/replicate-bulk/${job.jobId}`)
-        if (!r.ok) return
+        if (!r.ok) {
+          console.warn('[poll] HTTP', r.status)
+          return
+        }
         const s = await r.json()
-        setJob(prev => prev ? { ...prev, ...s } : prev)
-      } catch {}
-    }, 800)
+        console.debug('[poll]', {
+          phase: s.phase, stage: s.stage,
+          cur: `${s.current}/${s.total}`,
+          name: s.currentName,
+          elapsed: s.elapsedMs,
+        })
+        setJob(prev => {
+          if (!prev) return prev
+          // 단계(stage) 가 바뀌면 그 시점 timestamp 기록
+          const stageChanged = prev.stage !== s.stage || prev.current !== s.current
+          return {
+            ...prev,
+            ...s,
+            stageStartedAt: stageChanged ? Date.now() : (prev.stageStartedAt || Date.now()),
+          }
+        })
+      } catch (e) {
+        console.warn('[poll] err', e.message)
+      }
+    }, 400)
+    return () => clearInterval(t)
+  }, [job?.jobId, job?.phase])
+
+  // 매 250ms 마다 강제 rerender (stage 경과시간 표시용)
+  const [tick, setTick] = useState(0)
+  useEffect(() => {
+    if (!job?.jobId) return
+    if (job.phase === 'done' || job.phase === 'error') return
+    const t = setInterval(() => setTick(v => v + 1), 250)
     return () => clearInterval(t)
   }, [job?.jobId, job?.phase])
 
@@ -214,6 +366,7 @@ export default function BidLab() {
       return
     }
     setErr(''); setOkMsg(''); setPages([]); setPdfDoc(null); setSid('')
+    setFields([]); setListTables([])
     setBusy(true)
     try {
       const t = getToken()
@@ -247,6 +400,78 @@ export default function BidLab() {
       if (fileRef.current) fileRef.current.value = ''
     }
   }, [])
+
+  // sid 변경 시 필드 자동 추출
+  useEffect(() => {
+    if (!sid) return
+    let cancelled = false
+    setFieldsBusy(true)
+    ;(async () => {
+      try {
+        const r = await authFetch(`/api/admin/lab/fields/${sid}`)
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        const j = await r.json()
+        if (cancelled) return
+        setFields((j.fields || []).map(f => ({
+          ...f,
+          removed: false,
+          mapping: inferDefaultMapping(f.label),
+        })))
+        setListTables((j.listTables || []).map(t => ({
+          ...t,
+          removed: false,
+          headers: t.headers.map(h => ({
+            ...h,
+            key: h.suggestedKey || '',
+            removed: !h.suggestedKey, // 추론 실패한 헤더는 기본 제거 상태
+          })),
+        })))
+      } catch (e) {
+        if (!cancelled) console.warn('[fields] err', e.message)
+      } finally {
+        if (!cancelled) setFieldsBusy(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [sid])
+
+  const removeField = (id) =>
+    setFields(prev => prev.map(f => f.id === id ? { ...f, removed: true } : f))
+  const restoreField = (id) =>
+    setFields(prev => prev.map(f => f.id === id ? { ...f, removed: false } : f))
+  const updateFieldMapping = (id, patch) =>
+    setFields(prev => prev.map(f => f.id === id ? { ...f, mapping: { ...f.mapping, ...patch } } : f))
+
+  // 매트릭스 — 직원별 값 수정 / broadcast input / 전체 적용
+  const setPerEmpValue = (fieldId, empId, value) =>
+    setFields(prev => prev.map(f => {
+      if (f.id !== fieldId) return f
+      const map = { ...(f.mapping?.perEmployeeMap || {}) }
+      map[String(empId)] = value
+      return { ...f, mapping: { ...f.mapping, perEmployeeMap: map } }
+    }))
+  const setBroadcastValue = (fieldId, value) =>
+    setFields(prev => prev.map(f =>
+      f.id === fieldId ? { ...f, mapping: { ...f.mapping, broadcastValue: value } } : f
+    ))
+  const applyBroadcast = (fieldId) => {
+    setFields(prev => prev.map(f => {
+      if (f.id !== fieldId) return f
+      const v = f.mapping?.broadcastValue ?? ''
+      const map = { ...(f.mapping?.perEmployeeMap || {}) }
+      for (const id of selectedIds) map[String(id)] = v
+      return { ...f, mapping: { ...f.mapping, perEmployeeMap: map } }
+    }))
+  }
+
+  // List 표 — 통째 제거/복원, header 매핑 변경/제거
+  const toggleListTable = (id) =>
+    setListTables(prev => prev.map(t => t.id === id ? { ...t, removed: !t.removed } : t))
+  const updateListHeader = (tableId, col, patch) =>
+    setListTables(prev => prev.map(t => t.id !== tableId ? t : ({
+      ...t,
+      headers: t.headers.map(h => h.col === col ? { ...h, ...patch } : h),
+    })))
 
   // 썸네일 렌더링
   useEffect(() => {
@@ -329,34 +554,82 @@ export default function BidLab() {
   }
 
   const toggleEmployee = (id) => {
+    setSelectedIds(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    )
+  }
+  const removeFromOrder = (id) => setSelectedIds(prev => prev.filter(x => x !== id))
+  const selectAll = () => setSelectedIds(employees.map(e => e.id))
+  const clearAll = () => setSelectedIds([])
+
+  // 드래그앤드롭 — 순서 변경
+  const onDragStart = (idx) => (e) => {
+    setDragIdx(idx)
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', String(idx))
+  }
+  const onDragOverItem = (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }
+  const onDropItem = (idx) => (e) => {
+    e.preventDefault()
+    const from = dragIdx
+    setDragIdx(null)
+    if (from == null || from === idx) return
     setSelectedIds(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id); else next.add(id)
+      const next = [...prev]
+      const [moved] = next.splice(from, 1)
+      next.splice(idx, 0, moved)
       return next
     })
   }
-  const selectAll = () => setSelectedIds(new Set(employees.map(e => e.id)))
-  const clearAll = () => setSelectedIds(new Set())
+  const onDragEnd = () => setDragIdx(null)
 
   const startReplicate = async () => {
     if (!sid) { setErr('파일을 먼저 업로드하세요'); return }
-    if (selectedIds.size === 0) { setErr('직원을 한 명 이상 선택하세요'); return }
+    if (selectedIds.length === 0) { setErr('직원을 한 명 이상 선택하세요'); return }
     setErr(''); setOkMsg(''); setJob(null)
     try {
+      const userFields = mode === 'fields'
+        ? fields.map(f => ({
+            removed: !!f.removed,
+            label: f.label,
+            mapping: f.mapping || { type: 'auto' },
+          }))
+        : undefined
+      const userListTables = mode === 'fields'
+        ? listTables.map(t => ({
+            id: t.id,
+            removed: !!t.removed,
+            headers: t.headers.map(h => ({
+              col: h.col,
+              label: h.label,
+              key: h.removed ? null : (h.key || null),
+              removed: !!h.removed,
+            })),
+          }))
+        : undefined
+      console.log('[replicate] 시작 요청', {
+        sid, mode, count: selectedIds.length, ids: selectedIds,
+        userFields: userFields?.length, userListTables: userListTables?.length,
+      })
       const r = await authFetch('/api/admin/lab/replicate-bulk', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sid,
-          employeeIds: Array.from(selectedIds),
+          mode,
+          employeeIds: selectedIds, // 이미 사용자 순서대로 정렬된 배열
           instruction,
+          userFields,
+          userListTables,
         }),
       })
       const j = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`)
+      console.log('[replicate] jobId 수신', j)
       setJob({
         jobId: j.jobId,
         phase: 'queued',
+        stage: '',
         current: 0,
         total: j.total,
         currentName: '',
@@ -364,8 +637,10 @@ export default function BidLab() {
         failedCount: 0,
         failed: [],
         downloaded: false,
+        stageStartedAt: Date.now(),
       })
     } catch (e) {
+      console.error('[replicate] start err', e)
       setErr(e.message)
     }
   }
@@ -433,6 +708,40 @@ export default function BidLab() {
         />
       </div>
 
+      {/* 1.5 모드 토글 */}
+      {sid && (
+        <div style={{ ...S.card, padding: 14 }}>
+          <div style={{ display: 'flex', gap: 0, alignItems: 'stretch' }}>
+            {[
+              { key: 'free',   title: '자유 모드',   desc: 'GPT 자동 매핑 + 자연어 지시문' },
+              { key: 'fields', title: '필드 모드',   desc: '자동 추출 필드를 DB 컬럼에 직접 매핑 (GPT 우회)' },
+            ].map((m, i) => {
+              const active = mode === m.key
+              return (
+                <button
+                  key={m.key}
+                  onClick={() => setMode(m.key)}
+                  disabled={!!job && job.phase !== 'done' && job.phase !== 'error'}
+                  style={{
+                    flex: 1, padding: '12px 14px', cursor: 'pointer',
+                    background: active ? '#1d4ed8' : '#fff',
+                    color: active ? '#fff' : '#0f172a',
+                    border: '1px solid ' + (active ? '#1d4ed8' : '#e5e7eb'),
+                    borderRight: i === 0 ? 'none' : '1px solid ' + (active ? '#1d4ed8' : '#e5e7eb'),
+                    borderRadius: i === 0 ? '8px 0 0 8px' : '0 8px 8px 0',
+                    fontFamily: 'inherit', textAlign: 'left',
+                    transition: 'background .12s ease',
+                  }}
+                >
+                  <div style={{ fontWeight: 700, fontSize: 13 }}>{m.title}</div>
+                  <div style={{ fontSize: 11, marginTop: 2, opacity: 0.85 }}>{m.desc}</div>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       {/* 2. 페이지 미리보기 */}
       {pages.length > 0 && (
         <div style={S.card}>
@@ -460,6 +769,308 @@ export default function BidLab() {
         </div>
       )}
 
+      {/* 2.5. 자동 추출 필드 — 필드 모드에서만 */}
+      {sid && mode === 'fields' && (
+        <div style={S.card}>
+          <div style={S.cardTitle}>
+            자동 추출 필드
+            {fieldsBusy && <span style={{ marginLeft: 8, fontSize: 11, color: '#1d4ed8' }}>추출중…</span>}
+            {!fieldsBusy && fields.length > 0 && (
+              <>
+                <span style={{ marginLeft: 8, ...S.badge }}>
+                  전체 {fields.length}
+                </span>
+                <span style={{ marginLeft: 4, ...S.blueBadge }}>
+                  활성 {fields.filter(f => !f.removed).length}
+                </span>
+              </>
+            )}
+          </div>
+          {!fieldsBusy && fields.length === 0 && (
+            <div style={{ fontSize: 12, color: '#94a3b8' }}>
+              자동 추출된 필드가 없습니다. (표 구조가 단순하지 않거나 라벨 사전과 매치 안 됨)
+            </div>
+          )}
+          {fields.length > 0 && (
+            <>
+              <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 10 }}>
+                라벨 옆/아래의 값 셀을 자동으로 찾아 필드로 잡았습니다.
+                그대로 둘 필드는 X 로 빼세요.
+              </div>
+              <div style={S.fieldsGrid}>
+                {fields.map(f => {
+                  const m = f.mapping || { type: 'auto' }
+                  return (
+                    <div key={f.id} style={S.fieldCard(f.removed)}>
+                      <button
+                        style={S.fieldXBtn}
+                        onClick={() => f.removed ? restoreField(f.id) : removeField(f.id)}
+                        title={f.removed ? '복원' : '필드 제외'}
+                      >{f.removed ? '↺' : '×'}</button>
+                      <div>
+                        <span style={{ ...S.fieldLabel, color: '#1d4ed8' }}>{f.label}</span>
+                      </div>
+                      <div style={S.fieldValueRow}>
+                        <span style={S.fieldArrow}>현재 →</span>
+                        {f.currentValue
+                          ? <span style={S.fieldValue}>{f.currentValue}</span>
+                          : <span style={S.fieldEmpty}>(빈 칸)</span>}
+                      </div>
+                      <div style={{ marginTop: 8 }}>
+                        <select
+                          style={{ ...S.select, minWidth: 0, width: '100%', fontSize: 12, padding: '5px 8px' }}
+                          value={
+                            m.type === 'column' ? `column:${m.column}` :
+                            m.type === 'manual' ? 'manual' :
+                            m.type === 'blank' ? 'blank' :
+                            m.type === 'perEmployee' ? 'perEmployee' : 'auto'
+                          }
+                          onChange={(e) => {
+                            const v = e.target.value
+                            if (v === 'auto')   updateFieldMapping(f.id, { type: 'auto', column: undefined, manualValue: undefined, perEmployeeMap: undefined })
+                            else if (v === 'manual') updateFieldMapping(f.id, { type: 'manual', column: undefined, manualValue: m.manualValue || '', perEmployeeMap: undefined })
+                            else if (v === 'blank')  updateFieldMapping(f.id, { type: 'blank', column: undefined, manualValue: undefined, perEmployeeMap: undefined })
+                            else if (v === 'perEmployee') updateFieldMapping(f.id, { type: 'perEmployee', column: undefined, manualValue: undefined, perEmployeeMap: m.perEmployeeMap || {} })
+                            else if (v.startsWith('column:')) updateFieldMapping(f.id, { type: 'column', column: v.slice(7), manualValue: undefined, perEmployeeMap: undefined })
+                          }}
+                          disabled={f.removed}
+                        >
+                          <option value="auto">자동 추론 (GPT)</option>
+                          {MAPPABLE_COLUMNS.map(c => (
+                            <option key={c.key} value={`column:${c.key}`}>{c.label}</option>
+                          ))}
+                          <option value="manual">모든 직원 동일 값 입력</option>
+                          <option value="perEmployee">⚡ 이 채용에서만 (직원별 다른 값)</option>
+                          <option value="blank">빈 칸으로</option>
+                        </select>
+                        {m.type === 'manual' && (
+                          <input
+                            type="text"
+                            style={{
+                              marginTop: 4, width: '100%',
+                              boxSizing: 'border-box', fontSize: 12, padding: '5px 8px',
+                              border: '1px solid #d1d5db', borderRadius: 5,
+                              background: '#fff', fontFamily: 'inherit',
+                            }}
+                            value={m.manualValue || ''}
+                            onChange={(e) => updateFieldMapping(f.id, { manualValue: e.target.value })}
+                            placeholder="여기 입력한 값이 모든 직원의 이 셀에 들어감"
+                            disabled={f.removed}
+                          />
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* 2.6. List 표 매핑 (유사이력 등) */}
+      {sid && mode === 'fields' && listTables.length > 0 && (
+        <div style={S.card}>
+          <div style={S.cardTitle}>
+            List 표 매핑 (유사이력 / 학력 / 경력 등)
+            <span style={{ marginLeft: 8, ...S.badge }}>{listTables.length}개</span>
+          </div>
+          <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 10 }}>
+            row 0 헤더가 모두 라벨인 표는 직원의 <strong>projects 배열로 row 자동 채움</strong>.
+            <strong style={{ color: '#1d4ed8' }}> 템플릿 row 개수만큼만</strong> 채우고, 직원 프로젝트가 더 많아도 row 를 추가하지 않습니다 (앞에서부터 N 개만). 부족하면 남은 row 는 빈 칸.
+          </div>
+          {listTables.map((t, idx) => (
+            <div
+              key={t.id}
+              style={{
+                position: 'relative',
+                background: t.removed ? '#f1f5f9' : '#fff',
+                border: '1px solid ' + (t.removed ? '#cbd5e1' : '#e5e7eb'),
+                borderRadius: 8, padding: 12, marginBottom: 10,
+                opacity: t.removed ? 0.55 : 1,
+              }}
+            >
+              <button
+                style={S.fieldXBtn}
+                onClick={() => toggleListTable(t.id)}
+                title={t.removed ? '복원' : '이 표 자동 채움 제외'}
+              >{t.removed ? '↺' : '×'}</button>
+              <div style={{ fontWeight: 700, fontSize: 13, color: '#0f172a', marginBottom: 8 }}>
+                유사이력 표 #{idx + 1}
+                <span style={{ marginLeft: 8, ...S.badge }}>
+                  row {t.rows} × col {t.cols}
+                </span>
+                <span style={{ marginLeft: 4, ...S.badge }}>
+                  데이터 row {t.dataRowCount}
+                </span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8 }}>
+                {t.headers.map(h => (
+                  <div
+                    key={h.col}
+                    style={{
+                      background: h.removed ? '#f1f5f9' : '#f8fafc',
+                      border: '1px solid #e5e7eb',
+                      borderRadius: 6, padding: '8px 10px',
+                      opacity: h.removed ? 0.55 : 1, position: 'relative',
+                    }}
+                  >
+                    <button
+                      style={{
+                        position: 'absolute', top: 4, right: 4,
+                        width: 20, height: 20, borderRadius: 10,
+                        border: '1px solid #e5e7eb', background: '#fff',
+                        fontSize: 11, lineHeight: '16px', color: '#64748b', cursor: 'pointer', padding: 0,
+                      }}
+                      onClick={() => updateListHeader(t.id, h.col, { removed: !h.removed })}
+                      title={h.removed ? '복원' : '이 열 제외'}
+                    >{h.removed ? '↺' : '×'}</button>
+                    <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>
+                      <span style={S.fieldLabel}>{h.label}</span>
+                    </div>
+                    <select
+                      style={{
+                        width: '100%', fontSize: 11, padding: '4px 6px',
+                        border: '1px solid #d1d5db', borderRadius: 4, background: '#fff',
+                      }}
+                      value={h.key || ''}
+                      onChange={(e) => updateListHeader(t.id, h.col, { key: e.target.value || null })}
+                      disabled={h.removed || t.removed}
+                    >
+                      <option value="">— 매핑 안 함 —</option>
+                      {PROJECT_COLUMNS.map(c => (
+                        <option key={c.key} value={c.key}>{c.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 2.7. 직원별 입력 매트릭스 — "이 채용에서만" 필드 */}
+      {sid && mode === 'fields' && (() => {
+        const perEmpFields = fields.filter(f => !f.removed && f.mapping?.type === 'perEmployee')
+        if (perEmpFields.length === 0 || selectedIds.length === 0) return null
+        return (
+          <div style={S.card}>
+            <div style={S.cardTitle}>
+              직원별 입력 매트릭스
+              <span style={{ marginLeft: 8, ...S.badge }}>
+                {selectedIds.length}명 × {perEmpFields.length}필드
+              </span>
+            </div>
+            <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 10 }}>
+              "이 채용에서만" 으로 표시된 필드들. 각 직원에 다른 값. 컬럼 헤더의 input + [전체 적용] 누르면 그 값이 모든 직원에 한 번에 채워짐.
+              빈 칸인 직원은 원본(템플릿 값) 유지.
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ borderCollapse: 'collapse', fontSize: 12, width: '100%' }}>
+                <thead>
+                  <tr>
+                    <th style={{
+                      position: 'sticky', left: 0, background: '#f8fafc',
+                      border: '1px solid #e5e7eb', padding: '8px 10px',
+                      textAlign: 'left', fontWeight: 700, minWidth: 140,
+                    }}>직원</th>
+                    {perEmpFields.map(f => (
+                      <th key={f.id} style={{
+                        border: '1px solid #e5e7eb', padding: '8px 10px',
+                        background: '#eff6ff', minWidth: 200, fontWeight: 700,
+                      }}>
+                        <div style={{ color: '#1d4ed8' }}>{f.label}</div>
+                      </th>
+                    ))}
+                  </tr>
+                  {/* 전체 적용 row */}
+                  <tr>
+                    <th style={{
+                      position: 'sticky', left: 0, background: '#fff7ed',
+                      border: '1px solid #e5e7eb', padding: '6px 10px',
+                      textAlign: 'right', fontSize: 11, color: '#9a3412', fontWeight: 600,
+                    }}>
+                      ⚡ 전체 적용
+                    </th>
+                    {perEmpFields.map(f => (
+                      <th key={f.id} style={{
+                        border: '1px solid #e5e7eb', padding: '6px 10px',
+                        background: '#fff7ed',
+                      }}>
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          <input
+                            type="text"
+                            value={f.mapping?.broadcastValue || ''}
+                            onChange={(e) => setBroadcastValue(f.id, e.target.value)}
+                            placeholder="모두에게 적용할 값"
+                            style={{
+                              flex: 1, fontSize: 11, padding: '4px 6px',
+                              border: '1px solid #d1d5db', borderRadius: 4,
+                              background: '#fff', fontFamily: 'inherit',
+                            }}
+                          />
+                          <button
+                            onClick={() => applyBroadcast(f.id)}
+                            style={{
+                              fontSize: 11, padding: '4px 8px',
+                              border: 'none', borderRadius: 4,
+                              background: '#9a3412', color: '#fff',
+                              cursor: 'pointer', fontWeight: 600,
+                            }}
+                          >적용</button>
+                        </div>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectedIds.map(empId => {
+                    const emp = employees.find(e => e.id === empId)
+                    if (!emp) return null
+                    return (
+                      <tr key={empId}>
+                        <td style={{
+                          position: 'sticky', left: 0, background: '#fff',
+                          border: '1px solid #e5e7eb', padding: '6px 10px',
+                          fontWeight: 600,
+                        }}>
+                          {emp.name}
+                          {emp.position && (
+                            <span style={{ marginLeft: 6, fontSize: 11, color: '#94a3b8' }}>
+                              ({emp.position})
+                            </span>
+                          )}
+                        </td>
+                        {perEmpFields.map(f => {
+                          const v = f.mapping?.perEmployeeMap?.[String(empId)] ?? ''
+                          return (
+                            <td key={f.id} style={{
+                              border: '1px solid #e5e7eb', padding: '4px 6px',
+                            }}>
+                              <input
+                                type="text"
+                                value={v}
+                                onChange={(e) => setPerEmpValue(f.id, empId, e.target.value)}
+                                style={{
+                                  width: '100%', fontSize: 12, padding: '4px 6px',
+                                  border: '1px solid #d1d5db', borderRadius: 4,
+                                  background: '#fff', boxSizing: 'border-box', fontFamily: 'inherit',
+                                }}
+                              />
+                            </td>
+                          )
+                        })}
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )
+      })()}
+
       {/* 3. 직원 선택 + 한글 파일 생성 */}
       {pages.length > 0 && (
         <div style={S.card}>
@@ -469,7 +1080,7 @@ export default function BidLab() {
             <span style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>
               활성 직원 {employees.length}명
             </span>
-            <span style={S.blueBadge}>선택 {selectedIds.size}명</span>
+            <span style={S.blueBadge}>선택 {selectedIds.length}명</span>
             <div style={{ flex: 1 }} />
             <button style={S.ghostBtn} onClick={selectAll} disabled={!!job && job.phase !== 'done' && job.phase !== 'error'}>
               전체 선택
@@ -481,7 +1092,7 @@ export default function BidLab() {
 
           <div style={S.empGrid}>
             {employees.map(e => {
-              const checked = selectedIds.has(e.id)
+              const checked = selectedIds.includes(e.id)
               return (
                 <label key={e.id} style={S.empItem(checked)}>
                   <input
@@ -497,31 +1108,88 @@ export default function BidLab() {
             })}
           </div>
 
-          <div style={{ marginTop: 14, marginBottom: 12 }}>
-            <div style={{ fontSize: 12, color: '#64748b', marginBottom: 6, fontWeight: 600 }}>
-              지시사항 (선택) — 비워두면 GPT가 라벨을 보고 알아서 채움
+          {/* 선택 순서 — 드래그앤드롭 */}
+          {selectedIds.length > 0 && (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: '#475569' }}>
+                  선택 순서
+                </span>
+                <span style={{ fontSize: 11, color: '#94a3b8' }}>
+                  ⋮⋮ 핸들을 끌어 위/아래로 순서 변경 — 위에서 아래 순서대로 .hwp 에 들어감
+                </span>
+              </div>
+              <div style={S.orderList}>
+                {selectedIds.map((id, idx) => {
+                  const emp = employees.find(e => e.id === id)
+                  if (!emp) return null
+                  const dragging = dragIdx === idx
+                  const locked = !!job && job.phase !== 'done' && job.phase !== 'error'
+                  return (
+                    <div
+                      key={id}
+                      draggable={!locked}
+                      onDragStart={onDragStart(idx)}
+                      onDragOver={onDragOverItem}
+                      onDrop={onDropItem(idx)}
+                      onDragEnd={onDragEnd}
+                      style={S.orderItem(dragging)}
+                    >
+                      <span style={S.orderHandle}>⋮⋮</span>
+                      <span style={S.orderNum}>{idx + 1}</span>
+                      <span style={S.empName}>{emp.name}</span>
+                      {emp.position && <span style={S.empPos}>({emp.position})</span>}
+                      <div style={{ flex: 1 }} />
+                      <button
+                        type="button"
+                        style={S.orderRemove}
+                        onClick={() => removeFromOrder(id)}
+                        disabled={locked}
+                        title="목록에서 제거"
+                      >×</button>
+                    </div>
+                  )
+                })}
+              </div>
             </div>
-            <textarea
-              style={{ ...S.textarea, minHeight: 80 }}
-              value={instruction}
-              onChange={(e) => setInstruction(e.target.value)}
-              placeholder="예) 이름·연락처·이메일·학력·해당분야 근무경력만 채우고 나머지는 그대로 두세요."
-              disabled={!!job && job.phase !== 'done' && job.phase !== 'error'}
-            />
-          </div>
+          )}
+
+          {mode === 'free' && (
+            <div style={{ marginTop: 14, marginBottom: 12 }}>
+              <div style={{ fontSize: 12, color: '#64748b', marginBottom: 6, fontWeight: 600 }}>
+                지시사항 (선택) — 비워두면 GPT가 라벨을 보고 알아서 채움
+              </div>
+              <textarea
+                style={{ ...S.textarea, minHeight: 80 }}
+                value={instruction}
+                onChange={(e) => setInstruction(e.target.value)}
+                placeholder="예) 이름·연락처·이메일·학력·해당분야 근무경력만 채우고 나머지는 그대로 두세요."
+                disabled={!!job && job.phase !== 'done' && job.phase !== 'error'}
+              />
+            </div>
+          )}
+          {mode === 'fields' && (
+            <div style={{ marginTop: 14, marginBottom: 12, fontSize: 12, color: '#64748b' }}>
+              <strong style={{ color: '#1d4ed8' }}>필드 모드</strong> — 위에서 매핑한 필드 그대로 적용 (GPT 호출 없음).
+              활성 필드 <strong style={{ color: '#0f172a' }}>{fields.filter(f => !f.removed).length}</strong>개
+            </div>
+          )}
 
           <button
             style={S.bigBtn}
             onClick={startReplicate}
             disabled={
               busy ||
-              selectedIds.size === 0 ||
+              selectedIds.length === 0 ||
+              (mode === 'fields' && fields.filter(f => !f.removed).length === 0) ||
               (!!job && job.phase !== 'done' && job.phase !== 'error')
             }
           >
             {job && job.phase !== 'done' && job.phase !== 'error'
               ? '처리중…'
-              : `한글 파일 생성 (${selectedIds.size}명, 단일 .hwp)`}
+              : mode === 'fields'
+                ? `한글 파일 생성 — 필드 모드 (${selectedIds.length}명)`
+                : `한글 파일 생성 — 자유 모드 (${selectedIds.length}명)`}
           </button>
           <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 8 }}>
             템플릿이 N벌 복제되어 한 파일 안에 차례로 들어가고, 각 영역이 해당 직원 데이터로 채워집니다. 사람 사이는 빈 줄 2개로 구분.
@@ -542,7 +1210,13 @@ export default function BidLab() {
                   {job.phase === 'error'       && '오류'}
                   {job.stage && (
                     <span style={{ marginLeft: 8, fontWeight: 600, color: '#1d4ed8', fontSize: 12 }}>
-                      [{stageLabel(job.stage)}]
+                      [{stageLabel(job.stage)}
+                      {job.stageStartedAt && job.phase !== 'done' && job.phase !== 'error' && (
+                        <span style={{ marginLeft: 4, color: '#94a3b8', fontWeight: 500 }}>
+                          {' '}+{((Date.now() - job.stageStartedAt) / 1000).toFixed(1)}s
+                        </span>
+                      )}
+                      ]
                     </span>
                   )}
                 </span>
@@ -551,7 +1225,7 @@ export default function BidLab() {
                   {job.failedCount ? ` (실패 ${job.failedCount})` : ''}
                   {typeof job.elapsedMs === 'number' && (
                     <span style={{ marginLeft: 10, color: '#94a3b8' }}>
-                      {(job.elapsedMs / 1000).toFixed(1)}s
+                      전체 {(job.elapsedMs / 1000).toFixed(1)}s
                     </span>
                   )}
                 </span>

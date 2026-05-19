@@ -55,6 +55,24 @@ export default function BidEmployee() {
   }
   useEffect(() => { load() }, [])
 
+  const toggleAttendanceTarget = async (row) => {
+    const next = row.attendance_target === 1 ? 0 : 1
+    // 낙관적 업데이트
+    setList(prev => prev.map(x => x.id === row.id ? { ...x, attendance_target: next } : x))
+    try {
+      const r = await authFetch(`/api/admin/bid-employees/${row.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ attendance_target: next }),
+      })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+    } catch (e) {
+      setErr(e.message)
+      // 롤백
+      setList(prev => prev.map(x => x.id === row.id ? { ...x, attendance_target: row.attendance_target } : x))
+    }
+  }
+
   const startEdit = (row) => {
     setEditId(row.id); setAdding(false)
     setDraft({
@@ -175,6 +193,7 @@ export default function BidEmployee() {
       <td className="muted small">자동</td>
       <td><input className="row-input" type="date" value={draft.real_join_date} onChange={onField('real_join_date')} /></td>
       <td className="muted small">자동</td>
+      <td className="muted small center">{forNew ? '추가 후 토글' : '체크박스로'}</td>
       <td>
         <button className="sm-btn primary" onClick={forNew ? saveNew : saveEdit}>저장</button>
         <button className="sm-btn" onClick={cancelEdit}>취소</button>
@@ -214,6 +233,7 @@ export default function BidEmployee() {
               <Th k="career" label="경력" />
               <Th k="real_join_date" label="실제 입사" />
               <Th k="stay" label="재직" />
+              <th style={{width:90}} title="출퇴근 크롤링 평가 대상 여부">출결 대상</th>
               <th style={{width:220}}></th>
             </tr>
           </thead>
@@ -248,6 +268,22 @@ export default function BidEmployee() {
                   <td className="small">{career.label || '-'}</td>
                   <td className="mono small">{r.real_join_date || '-'}</td>
                   <td className="small">{stayDays != null ? `${stayDays}일 (${stayY}년)` : '-'}</td>
+                  <td className="center">
+                    <label style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      <input
+                        type="checkbox"
+                        checked={r.attendance_target === 1}
+                        onChange={() => toggleAttendanceTarget(r)}
+                      />
+                      <span style={{
+                        fontSize: 11,
+                        color: r.attendance_target === 1 ? '#166534' : '#94a3b8',
+                        fontWeight: 600,
+                      }}>
+                        {r.attendance_target === 1 ? '포함' : '제외'}
+                      </span>
+                    </label>
+                  </td>
                   <td>
                     <button className="sm-btn" onClick={() => nav(`/bid/employee/${r.id}`)}>상세</button>
                     <button className="sm-btn" onClick={() => startEdit(r)}>수정</button>
