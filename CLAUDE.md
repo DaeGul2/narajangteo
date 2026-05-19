@@ -1,12 +1,65 @@
-# narajangteo — g2b 채용대행 공고 자동 수집·요약·발송 시스템
+# narajangteo — g2b 채용대행 공고 자동 수집·요약·발송 + 출퇴근 관리 시스템
 
-**Version 1 · 2026-05-13**
+**Version 2 · 2026-05-19**
+
+> v1 (2026-05-13): g2b 채용 크롤러 + 입찰 모듈
+> v2 (2026-05-19): 출퇴근 관리 시스템 추가 (지각 룰 v1, 공휴일 캘린더, 리포트)
 
 ---
 
-## 📌 TODO — 내일 할 일 (2026-05-19)
+## 📌 출퇴근 관리 — 빠른 참조
 
-### 출퇴근 관리 · 지각 판단 룰 (초안, 미정)
+### 지각 판단 룰 v1 (최종)
+
+상세: `출퇴근관리/룰/rule_v1.md` · 구현: `server/lib/attendanceLateness.js`
+
+- **크롤 시각**: 17:00 (EOD 1회)
+- **출근 인정**: `check_in_time ≤ 09:30:59`
+- **평가 우선순위**: 휴가 → 근무유형 → 출근내역
+- **무시 카테고리**: 재택근무(D, E), 연장근로(I) — items 에서 제거
+- **주말 / 공휴일 스킵**: 토/일 + `holidays` 테이블 등록일 = 평가 X (`is_late = NULL`)
+- **카테고리 코드 A~O**: `memory/attendance_category_codes.md`
+
+**케이스 트리** (먼저 매칭되는 룰 적용):
+- `(0-1)` 휴가류(C/F/M/N/O + 연차/여름방학/병가) → 무조건 통과
+- `(0-2)` 오전반차 + 오후반차 → 통과
+- `(7)` J + L + 외근/출장 / `(11)` K + L + 외근/출장 → 통과
+- `(1)` 반의반차 단독: 09:30~11:30 → 11:30:59 출근 / 그 외 → 09:30:59
+- `(2)` 반의반차(09:30~11:30) + 외근/출장: D → 통과 / T → start ≤ 12:00 통과 / 초과 시 11:30:59 출근
+- `(3=9)` 반의반차(09:30~11:30) + 오후반차 → 11:30:59 / `(10)` 그 외 → 09:30:59
+- `(5)` 오전반차 + 반의반차(14:00~16:00) → 16:00:59 / `(6)` 그 외 → 14:00:59
+- `(4)` 오전반차 + 외근/출장: 출근 ≤ 14:00:59 통과 / 없으면 D → 통과 / T → start ≤ 14:00 통과 / 초과 시 14:00:59
+- `(8)` 오후반차 + 외근/출장: 출근 ≤ 09:30:59 통과 / 없으면 D → 통과 / T → start ≤ 10:00 통과 / 초과 시 09:30:59
+- `(12)` 외근/출장만: D → 통과 / T → start ≤ 10:00 통과 / 초과 시 09:30:59
+- `(13)` 다 없음 → 09:30:59
+
+### 카테고리 코드 (A~O)
+
+| 코드 | 카테고리 | 비고 |
+|---|---|---|
+| A | 출장(date) | 무조건 통과 (단독·조합) |
+| B | 출장(time) | case 분기 |
+| C | 종일 | 무조건 통과 |
+| D | 재택(time) | **무시** |
+| E | 재택(date) | **무시** |
+| F | 유급기타휴가 | 무조건 통과 |
+| G | 외근(time) | case 분기 |
+| H | 외근(date) | 무조건 통과 |
+| I | 연장근로 | **무시** |
+| J | 반차 AM | cover 09:30~14:00 |
+| K | 반차 PM | cover 13:00~18:00 (금 17:00) |
+| L | 반의반차 | item start~end |
+| M | 무급기타휴가 | 무조건 통과 |
+| N | 경조휴가 | 무조건 통과 |
+| O | 겨울방학 | 무조건 통과 |
+
+> 실데이터 0건이지만 정의된 카테고리: 연차, 여름방학, 병가 (모두 0-1 무조건 통과).
+
+---
+
+## 📌 (구) TODO — 내일 할 일 (2026-05-19) [해결됨]
+
+> 아래 초안은 v2 에서 모두 구현됨. 보존용 기록.
 
 크롤 시각: **09:32 AM** (정시 + 약간 버퍼). `attendance_records` 단위로 `is_late` 판단.
 
@@ -115,14 +168,18 @@ narajangteo/
 ├── server/
 │   ├── index.js                ← Express 엔트리 (port 3001)
 │   ├── cron.js                 ← 일일 자동 실행 (--days=5)
-│   ├── migrate.js              ← RDS 스키마 적용
+│   ├── migrate.js              ← RDS 스키마 적용 (g2b 채용)
+│   ├── migrate_attendance.mjs  ← 출퇴근 컬럼 + holidays 테이블 + 시드 (멱등)
 │   ├── recipients.js           ← 수신자 CLI (테스트용)
-│   ├── schema.sql              ← MySQL 스키마
+│   ├── schema.sql              ← MySQL 스키마 (g2b 채용)
 │   ├── .env                    ← 환경변수 (git ignored)
 │   ├── data/files/             ← 첨부 디스크 저장소 (런타임 생성, git ignored)
+│   ├── _backfill_attendance.mjs ← 출퇴근 raw xls 일자별 백필 (createAttendanceSnapshot 직접 호출)
+│   ├── _recompute.mjs          ← 모든 record judgeV1 재계산 (holidays 변경 후)
+│   ├── _test_lateness_v1.mjs   ← judgeV1 historical 검증
 │   └── lib/
 │       ├── auth.js             ← LOGIN_KEY 인증 + 쿠키
-│       ├── db.js               ← mysql2 커넥션 풀 + 헬퍼
+│       ├── db.js               ← mysql2 풀 + 모든 헬퍼 (notices/employees/attendance/holidays/report)
 │       ├── utils.js            ← clean/normalize/money + browserLaunchOpts
 │       ├── classify.js         ← 정규식 1차 분류 (폴백)
 │       ├── aiClassify.js       ← GPT 채용대행 분류 + 캐시
@@ -133,10 +190,13 @@ narajangteo/
 │       ├── history.js          ← 이전 채용대행 기록 매칭 (4단계 fuzzy)
 │       ├── fileStore.js        ← 첨부 디스크 보존
 │       ├── report.js           ← 마크다운 + inline-HTML 생성
-│       └── email.js            ← nodemailer 메일플러그
+│       ├── email.js            ← nodemailer 메일플러그
+│       ├── attendanceCrawler.js  ← 메일플러그 쿠키 자동 크롤 + 엑셀 다운로드
+│       ├── attendanceParser.js   ← "근무 상태" 셀 → category/subType/timeRange items
+│       └── attendanceLateness.js ← **지각 판단 룰 v1 — judgeV1()**
 ├── client/
 │   ├── src/
-│   │   ├── App.jsx             ← BrowserRouter + Protected 라우트
+│   │   ├── App.jsx             ← BrowserRouter + Protected 라우트 + drawer
 │   │   ├── auth.js             ← login/check/logout + authFetch
 │   │   └── pages/
 │   │       ├── Login.jsx
@@ -144,7 +204,14 @@ narajangteo/
 │   │       ├── AdminNotices.jsx          ← 보관 공고 목록 (필터·검색)
 │   │       ├── AdminNoticeDetail.jsx     ← 단건 + 첨부 다운로드
 │   │       ├── AdminRecipients.jsx       ← 수신자 CRUD (인라인 편집)
-│   │       └── Crawl.jsx                 ← 수동 크롤링 (기존 흐름, DB X)
+│   │       ├── Crawl.jsx                 ← 수동 크롤링 (기존 흐름, DB X)
+│   │       ├── BidEmployee.jsx           ← 직원 CRUD + 출결대상 토글
+│   │       ├── BidEmployeeDetail.jsx     ← 직원 상세
+│   │       ├── BidProject.jsx            ← 유사사업
+│   │       ├── BidLab.jsx                ← .hwp 템플릿 자동 작성 실험실
+│   │       ├── AttendanceLab.jsx         ← 출퇴근 쿠키 등록 + 크롤 + 스냅샷 + 지각판정 인라인 수정
+│   │       ├── AttendanceReport.jsx      ← **기간별 리포트 — 사람별 지각 통계 + 드릴다운 + CSV**
+│   │       └── AttendanceHolidays.jsx    ← **공휴일 캘린더 (월 그리드, 클릭 등록/삭제, 재평가)**
 │   └── vite.config.js          ← proxy /api → 127.0.0.1:3001
 └── _ncs_data/                  ← 정적 데이터 + GPT 캐시
     ├── agency_history.json     ← 엑셀 인덱스 (699기관 × 4066건, 2020~2025)
@@ -219,6 +286,69 @@ CREATE TABLE cron_settings (
   updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 -- seed: 11:00 KST, 5일 윈도우
+
+-- ─── 출퇴근 관리 (v2) ───
+-- bid_employees: attendance_target 컬럼 추가 (디폴트 1)
+
+CREATE TABLE attendance_snapshots (
+  id              INT AUTO_INCREMENT PRIMARY KEY,
+  captured_at     DATETIME NOT NULL,         -- 크롤 시각 (보통 17:00)
+  row_count       INT NOT NULL,
+  excel_filename  VARCHAR(255),
+  note            TEXT,
+  created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE attendance_records (
+  id                 INT AUTO_INCREMENT PRIMARY KEY,
+  snapshot_id        INT NOT NULL,
+  employee_id        INT,                    -- bid_employees.id (매칭된 경우)
+  row_index          INT,
+  date               VARCHAR(50),            -- "YYYY-MM-DD (요일)"
+  name               VARCHAR(100),
+  emp_no             VARCHAR(50),
+  dept, position, work_type, check_in_time, check_in_outside,
+  check_out_time, check_out_outside, commute_status, work_status,
+  -- v2 지각 판정 컬럼 (migrate_attendance.mjs 가 ALTER 로 추가)
+  is_late          TINYINT(1),               -- 0=통과 / 1=지각 / NULL=주말·공휴일 skip
+  late_case_id     VARCHAR(30),              -- '4-2-2-2' / 'L_solo_0930' / 'weekend' / 'holiday' / ...
+  late_reason      TEXT,
+  late_deadline    VARCHAR(20),              -- "11:30:59" 등
+  manual_override  TINYINT(1) DEFAULT 0,     -- 1 이면 사용자 수정 — 재평가 시 보존
+  manual_note      TEXT,
+  FOREIGN KEY (snapshot_id) REFERENCES attendance_snapshots(id) ON DELETE CASCADE,
+  INDEX idx_is_late (is_late)
+);
+
+CREATE TABLE attendance_status_items (
+  id              INT AUTO_INCREMENT PRIMARY KEY,
+  record_id       INT NOT NULL,
+  item_index      INT,
+  category        VARCHAR(50),              -- 외근/출장/반차/반의반차/...
+  sub_type        VARCHAR(20),              -- AM/PM (반차)
+  range_type      VARCHAR(20),              -- time/date
+  start_time, end_time, start_date, end_date,
+  duration_minutes INT,
+  raw             TEXT,
+  FOREIGN KEY (record_id) REFERENCES attendance_records(id) ON DELETE CASCADE
+);
+
+CREATE TABLE holidays (
+  date       DATE PRIMARY KEY,
+  name       VARCHAR(100) NOT NULL,
+  source     VARCHAR(50) DEFAULT 'manual',  -- 'kr_default' / 'manual'
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+-- seed: 33건 (2024~2026 KR 공휴일 + 근로자의날). migrate_attendance.mjs 가 INSERT IGNORE.
+
+-- (기존) app_secrets — 메일플러그 쿠키 등
+CREATE TABLE app_secrets (
+  k VARCHAR(100) PRIMARY KEY,
+  v MEDIUMTEXT,
+  note TEXT,
+  updated_at DATETIME,
+  last_used_at DATETIME
+);
 ```
 
 ---
@@ -275,6 +405,25 @@ PW_BROWSER_PATH=/usr/bin/google-chrome
 - `GET  /api/admin/cron-settings` — `{hour, minute, enabled, days_back, next_run_at}`
 - `PATCH /api/admin/cron-settings` — `{hour?, minute?, enabled?, days_back?}`
 - `POST /api/admin/cron-settings/run-now` — cron.js 즉시 발화 (백그라운드 spawn)
+
+### Admin — 입찰
+- `GET /api/admin/bid-employees` · `POST` · `PATCH /:id` · `DELETE /:id` · `GET /:id/full`
+- 학력/경력/자격증 nested CRUD: `/:empId/{educations,careers,certifications}`
+- `GET /api/admin/bid-projects` · POST · PATCH · DELETE 등
+- `POST /api/admin/lab/parse` — .hwp 업로드 → 페이지 추출 (세션 캐시)
+- `POST /api/admin/lab/replicate-bulk` → 폴링 (`GET /:jobId`, `GET /:jobId/download`)
+
+### Admin — 출퇴근 관리 (v2)
+- `GET  /api/admin/attendance/cookies` — 메일플러그 쿠키 상태
+- `POST /api/admin/attendance/cookies` — 쿠키 저장
+- `POST /api/admin/attendance/crawl` — 크롤 실행 (createAttendanceSnapshot — 판정 자동 저장)
+- `GET  /api/admin/attendance/snapshots?limit=` — 스냅샷 목록
+- `GET  /api/admin/attendance/snapshots/:id` — 단건 + records + items (판정 포함)
+- `DELETE /api/admin/attendance/snapshots/:id`
+- `PATCH /api/admin/attendance/records/:id` — `{is_late?, manual_note?, reset?}` (수동 수정 / 재계산)
+- `GET  /api/admin/attendance/report?from=YYYY-MM-DD&to=YYYY-MM-DD` — 기간 리포트 (사람별 + 일자별 + 케이스 분포)
+- `POST /api/admin/attendance/recompute` — manual_override=0 인 전체 record judgeV1 재계산 (holidays 변경 후 사용)
+- `GET  /api/admin/holidays` · `POST` · `DELETE /:date` — 공휴일 캘린더 CRUD
 
 ---
 
@@ -340,7 +489,8 @@ ssh -i ~/Downloads/narajangteo.pem ubuntu@54.180.150.211
 # 코드 업데이트
 cd /opt/g2b && git pull
 cd server && npm install                # 의존성 변경 시
-node migrate.js                         # cron_settings 등 신규 테이블 추가 시
+node migrate.js                         # g2b 채용 스키마 (1회)
+node migrate_attendance.mjs             # 출퇴근 컬럼/holidays/시드 — v2부터 (멱등, 안전)
 cd ../client && npm run build           # 프론트 변경 시
 sudo systemctl restart g2b-api          # API 재시작 (스케줄러 포함)
 
