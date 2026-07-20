@@ -1,9 +1,42 @@
-# narajangteo — g2b 채용대행 공고 자동 수집·요약·발송 + 출퇴근 관리 시스템
+# narajangteo — g2b 채용대행 공고 자동 수집·요약·발송 + 출퇴근 관리 + 해외 공고 크롤링
 
-**Version 2 · 2026-05-19**
+**Version 3 · 2026-07-20**
 
 > v1 (2026-05-13): g2b 채용 크롤러 + 입찰 모듈
 > v2 (2026-05-19): 출퇴근 관리 시스템 추가 (지각 룰 v1, 공휴일 캘린더, 리포트)
+> v3 (2026-07-20): 해외 공고 크롤링 (공공기관 방콕지사 모니터링) + 수신자 직원 셀렉트 전환
+
+---
+
+## 📌 해외 공고 크롤링 (v3) — 빠른 참조
+
+- 원본 기획: `공공기관 방콕지사 리스트업.xlsx` 의 '방법' 열 4곳. 게시판 첫 페이지 diff 방식 (days_back 미사용).
+- **테이블**: `overseas_sources` (기관·on/off·last_status) / `overseas_notices` (source+notice_key 유니크) /
+  `overseas_recipients` / `overseas_cron_settings` (단일행) / `overseas_cron_runs` — 전부 g2b 채용 크롤러와 별개.
+- **검색 키워드 (공통)**: `태국`, `방콕`, `bangkok`, `thailand` — `lib/overseasCrawl.js` 의 `KEYWORDS`.
+- **소스 8개** (`overseas_sources.source_key` = `lib/overseasCrawl.js` 파서):
+  - `kcca` 주태국 한국문화원 — 302+쿠키 후 목록 GET, `tr.bbsList` `seq` → `/read/{seq}`
+  - `kec` 태국한국교육원 — 공지 게시판. **인증서 체인 불완전 → node:https rejectUnauthorized=false 로만 접근**
+  - `koipa` 한국지식재산보호원 — menu_cd 000041/000042 × 키워드 GET, `pageviewform('num')` → brdDetail
+  - `bizinfo` 기업마당 — 지원사업명 키워드 검색, `pblancId=PBLN_...` → selectSIIA200Detail
+  - `kto` 한국관광공사(투어라즈) — `/publicTenderList` 2탭(ktoip·other) + `/announcementList`.
+    ⚠️ 공고·공모의 `pssrpSeqEnc` 는 목록 렌더마다 재암호화돼 매 크롤 값이 달라짐(링크는 계속 유효) →
+    noticeKey 를 `제목+등록일` sha1(`contentKey`)로 잡아야 중복 저장/중복 메일이 안 생김.
+  - `suhyup` 수협중앙회 방콕무역지원센터 — `/bbs/suhyup/23/artclList.do?srchColumn=sj` 제목 검색
+  - `at` aT 방콕지사 (enjoykfood) — **https 가 자가서명 인증서 → http 로 접근**, `search_target=title_content`
+  - `kotra` KOTRA 방콕무역관 — ajax POST `selectBmBizKbcListAjax.do` (appl_biz_dept_cd=9101).
+    검색어 하이라이트를 `&lt;!HS&gt;` 로 이스케이프해 보내므로 엔티티 복원 **후** 제거 필요.
+- **크론**: `cron_overseas.js` — 활성 소스 순회 → 신규만 INSERT IGNORE → 신규 있으면 기관별 그룹 HTML 메일.
+  스케줄러는 index.js 인프로세스 (tickOverseas, g2b tick 과 독립 가드). 시드: 11:30 KST, enabled=0.
+- **API**: `/api/admin/overseas/` — notices, recipients CRUD, cron-settings(+run-now), cron-runs, sources(+PATCH enabled)
+- **메일**: 기관별 그룹 · 게시일 최신순(기관끼리도 최신 공고 있는 곳부터, 날짜 없는 건 맨 뒤) ·
+  제목의 KEYWORDS 를 형광펜 처리(`highlight()` — 반드시 `esc()` 이후 적용).
+- **UI**: drawer '해외 공고 크롤링' — 공고 목록 / 수신자 관리 / 스케줄 설정 (기관별 on/off + 실행 로그 포함)
+- **페이지네이션**: `client/src/components/Pagination.jsx` (`usePagination` + `<Pagination>`), 20건/페이지.
+  전체를 받아와 클라이언트에서 자름 (검색 필터와 함께 동작). 해외·나라장터 공고 목록 both. API limit 상한 5000.
+- **수신자 관리 (공통)**: g2b·해외 모두 자유 입력 대신 `bid_employees` 활성+email 있는 직원 셀렉트로 추가.
+  직원 email 은 메일플러그 아이디@insabr.kr 규칙 (2026-07-20 일괄 백필, 22명 중 20명).
+- ⚠️ 메일플러그 SMTP 는 **앱 비밀번호** 사용 (2026-07 외부 클라이언트 정책 변경). `.env` EMAIL_PASS = 앱 비밀번호.
 
 ---
 

@@ -16,6 +16,13 @@ const pool = mysql.createPool({
   dateStrings: true,   // DATE/DATETIME 을 문자열로 반환 (timezone 변환 X)
 });
 
+// RDS 의 global/session time_zone 이 UTC 라 NOW()·CURRENT_TIMESTAMP 가 UTC 로 찍힌다.
+// dateStrings:true 라 값이 그대로 문자열로 나가 화면에서 9시간 밀려 보이므로,
+// 커넥션마다 세션 타임존을 KST 로 고정한다. (mysql2 의 timezone 옵션은 Date 변환용이라 무관)
+pool.on('connection', (conn) => {
+  conn.query("SET time_zone = '+09:00'");
+});
+
 export default pool;
 
 // ─── app_secrets — 단순 key/value (메일플러그 쿠키 등) ───
@@ -836,4 +843,152 @@ export async function updateEmployeeProject(id, payload) {
 
 export async function removeEmployeeProject(id) {
   await pool.execute(`DELETE FROM bid_employee_projects WHERE id = ?`, [id]);
+}
+
+// ─── 해외 공고 크롤링 (v3) — 채용공고 크롤링과 완전 별개의 수신자/스케줄/공고 ───
+
+export async function listOverseasNotices(limit = 200) {
+  const [rows] = await pool.query(
+    `SELECT id, source, notice_key, title, organization, country, url,
+            posted_at, deadline,
+            CHAR_LENGTH(summary_md) > 0 AS has_summary,
+            email_sent_at, created_at
+     FROM overseas_notices
+     ORDER BY (posted_at IS NULL), posted_at DESC, created_at DESC, id DESC
+     LIMIT ?`,
+    [Math.min(Number(limit) || 200, 5000)]
+  );
+  return rows;
+}
+
+export async function getOverseasNotice(id) {
+  const [rows] = await pool.query(`SELECT * FROM overseas_notices WHERE id = ?`, [id]);
+  return rows[0] || null;
+}
+
+export async function getActiveOverseasRecipients() {
+  const [rows] = await pool.query(
+    `SELECT email, name FROM overseas_recipients WHERE active = 1 ORDER BY id`
+  );
+  return rows;
+}
+
+export async function addOverseasRecipient(email, name = null) {
+  await pool.execute(
+    `INSERT INTO overseas_recipients (email, name) VALUES (?, ?)
+     ON DUPLICATE KEY UPDATE name = VALUES(name), active = 1`,
+    [email, name]
+  );
+}
+
+export async function deactivateOverseasRecipient(email) {
+  await pool.execute(`UPDATE overseas_recipients SET active = 0 WHERE email = ?`, [email]);
+}
+
+export async function updateOverseasRecipient(id, { email, name, active }) {
+  const fields = [];
+  const params = [];
+  if (email !== undefined) { fields.push('email = ?'); params.push(email); }
+  if (name !== undefined)  { fields.push('name = ?');  params.push(name); }
+  if (active !== undefined){ fields.push('active = ?'); params.push(active ? 1 : 0); }
+  if (!fields.length) return;
+  params.push(id);
+  await pool.execute(`UPDATE overseas_recipients SET ${fields.join(', ')} WHERE id = ?`, params);
+}
+
+export async function getOverseasCronSettings() {
+  const [rows] = await pool.query(
+    `SELECT id, hour, minute, enabled, days_back, updated_at FROM overseas_cron_settings WHERE id = 1`
+  );
+  if (rows[0]) return rows[0];
+  await pool.execute(
+    `INSERT IGNORE INTO overseas_cron_settings (id, hour, minute, enabled, days_back) VALUES (1, 11, 30, 0, 5)`
+  );
+  const [r2] = await pool.query(
+    `SELECT id, hour, minute, enabled, days_back, updated_at FROM overseas_cron_settings WHERE id = 1`
+  );
+  return r2[0];
+}
+
+export async function updateOverseasCronSettings({ hour, minute, enabled, days_back }) {
+  const sets = [];
+  const params = [];
+  if (hour !== undefined) {
+    const h = Number(hour);
+    if (!Number.isInteger(h) || h < 0 || h > 23) throw new Error('hour 는 0~23');
+    sets.push('hour = ?'); params.push(h);
+  }
+  if (minute !== undefined) {
+    const m = Number(minute);
+    if (!Number.isInteger(m) || m < 0 || m > 59) throw new Error('minute 는 0~59');
+    sets.push('minute = ?'); params.push(m);
+  }
+  if (enabled !== undefined) {
+    sets.push('enabled = ?'); params.push(enabled ? 1 : 0);
+  }
+  if (days_back !== undefined) {
+    const d = Number(days_back);
+    if (!Number.isInteger(d) || d < 1 || d > 90) throw new Error('days_back 는 1~90');
+    sets.push('days_back = ?'); params.push(d);
+  }
+  if (!sets.length) return;
+  await pool.execute(`UPDATE overseas_cron_settings SET ${sets.join(', ')} WHERE id = 1`, params);
+}
+
+export async function listOverseasSources() {
+  const [rows] = await pool.query(
+    `SELECT id, source_key, name, site_url, target_url, method_note, enabled,
+            last_crawled_at, last_status, last_error, created_at, updated_at
+     FROM overseas_sources ORDER BY id`
+  );
+  return rows;
+}
+
+export async function updateOverseasSource(id, { enabled }) {
+  if (enabled === undefined) return;
+  await pool.execute(
+    `UPDATE overseas_sources SET enabled = ? WHERE id = ?`,
+    [enabled ? 1 : 0, id]
+  );
+}
+
+export async function touchOverseasSourceCrawl(id, { status, error = null }) {
+  await pool.execute(
+    `UPDATE overseas_sources SET last_crawled_at = NOW(), last_status = ?, last_error = ? WHERE id = ?`,
+    [status, error, id]
+  );
+}
+
+// 신규만 INSERT (source + notice_key 유니크) — 삽입된 행의 여부 반환
+export async function insertOverseasNotice({ source, noticeKey, title, organization, url, postedAt }) {
+  const [r] = await pool.execute(
+    `INSERT IGNORE INTO overseas_notices (source, notice_key, title, organization, url, posted_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [source, noticeKey, title, organization || null, url || null, postedAt || null]
+  );
+  return r.affectedRows > 0;
+}
+
+export async function markOverseasNoticesEmailed(source, noticeKeys) {
+  if (!noticeKeys.length) return;
+  await pool.query(
+    `UPDATE overseas_notices SET email_sent_at = NOW() WHERE source = ? AND notice_key IN (?)`,
+    [source, noticeKeys]
+  );
+}
+
+export async function startOverseasCronRun() {
+  const [r] = await pool.execute(
+    `INSERT INTO overseas_cron_runs (started_at, status) VALUES (NOW(), 'running')`
+  );
+  return r.insertId;
+}
+
+export async function finishOverseasCronRun(id, { status, totalFound, newCount, emailSent, errorMsg }) {
+  await pool.execute(
+    `UPDATE overseas_cron_runs
+     SET finished_at = NOW(), status = ?, total_found = ?, new_count = ?, email_sent = ?, error_msg = ?
+     WHERE id = ?`,
+    [status, totalFound ?? null, newCount ?? null, emailSent ? 1 : 0, errorMsg ?? null, id]
+  );
 }

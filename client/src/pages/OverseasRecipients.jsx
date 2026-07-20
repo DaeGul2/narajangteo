@@ -1,19 +1,18 @@
 import { useEffect, useState } from 'react'
 import { authFetch } from '../auth.js'
 
-export default function AdminRecipients() {
+export default function OverseasRecipients() {
   const [list, setList] = useState([])
   const [employees, setEmployees] = useState([])
   const [selEmpId, setSelEmpId] = useState('')
   const [err, setErr] = useState(null)
   const [busy, setBusy] = useState(false)
-  // 편집 상태: { id, email, name }
   const [edit, setEdit] = useState(null)
 
   const load = async () => {
     setErr(null)
     try {
-      const r = await authFetch('/api/admin/recipients')
+      const r = await authFetch('/api/admin/overseas/recipients')
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       const j = await r.json()
       setList(j.items || [])
@@ -35,7 +34,7 @@ export default function AdminRecipients() {
     if (!emp) return
     setBusy(true)
     try {
-      const r = await authFetch('/api/admin/recipients', {
+      const r = await authFetch('/api/admin/overseas/recipients', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: emp.email, name: emp.name || null }),
@@ -52,7 +51,7 @@ export default function AdminRecipients() {
   const saveEdit = async () => {
     if (!edit || !edit.email) return
     try {
-      const r = await authFetch(`/api/admin/recipients/${edit.id}`, {
+      const r = await authFetch(`/api/admin/overseas/recipients/${edit.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: edit.email, name: edit.name || null }),
@@ -65,7 +64,7 @@ export default function AdminRecipients() {
 
   const toggleActive = async (r) => {
     try {
-      const res = await authFetch(`/api/admin/recipients/${r.id}`, {
+      const res = await authFetch(`/api/admin/overseas/recipients/${r.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ active: r.active ? 0 : 1 }),
@@ -78,8 +77,8 @@ export default function AdminRecipients() {
   return (
     <div>
       <div className="page-head">
-        <h2>수신자 관리</h2>
-        <div className="page-sub">cron 실행 시 활성 수신자에게 일괄 발송</div>
+        <h2>해외 공고 수신자 관리</h2>
+        <div className="page-sub">해외 공고 cron 실행 시 활성 수신자에게 일괄 발송 (채용공고 수신자와 별개)</div>
       </div>
 
       <form className="recipient-form" onSubmit={add}>

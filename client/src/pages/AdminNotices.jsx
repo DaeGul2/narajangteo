@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { authFetch } from '../auth.js'
+import Pagination, { usePagination } from '../components/Pagination.jsx'
 
 export default function AdminNotices() {
   const [items, setItems] = useState([])
@@ -12,7 +13,7 @@ export default function AdminNotices() {
   const load = async () => {
     setLoading(true); setErr(null)
     try {
-      const r = await authFetch(`/api/admin/notices?filter=${filter}&limit=300`)
+      const r = await authFetch(`/api/admin/notices?filter=${filter}&limit=5000`)
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       const j = await r.json()
       setItems(j.items || [])
@@ -21,14 +22,16 @@ export default function AdminNotices() {
   }
   useEffect(() => { load() }, [filter])
 
-  const filtered = items.filter(i => {
+  const filtered = useMemo(() => items.filter(i => {
     if (!q) return true
     const s = q.toLowerCase()
     return (i.name || '').toLowerCase().includes(s)
       || (i.bid_no || '').toLowerCase().includes(s)
       || (i.demander || '').toLowerCase().includes(s)
       || (i.agency || '').toLowerCase().includes(s)
-  })
+  }), [items, q])
+
+  const { pageItems, ...pager } = usePagination(filtered, 20)
 
   return (
     <div>
@@ -67,7 +70,7 @@ export default function AdminNotices() {
           </tr>
         </thead>
         <tbody>
-          {filtered.map(it => (
+          {pageItems.map(it => (
             <tr key={it.bid_no}>
               <td className="mono">
                 <Link to={`/admin/notices/${encodeURIComponent(it.bid_no)}`}>
@@ -91,6 +94,8 @@ export default function AdminNotices() {
           ))}
         </tbody>
       </table>
+
+      <Pagination {...pager} />
     </div>
   )
 }

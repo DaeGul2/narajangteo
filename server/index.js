@@ -43,6 +43,12 @@ import {
   updateAttendanceRecord, getAttendanceReport,
   listHolidays, addHoliday, deleteHoliday, recomputeAllAttendanceJudgments,
 } from './lib/db.js';
+import {
+  listOverseasNotices, getOverseasNotice,
+  addOverseasRecipient, deactivateOverseasRecipient, updateOverseasRecipient,
+  getOverseasCronSettings, updateOverseasCronSettings,
+  listOverseasSources, updateOverseasSource,
+} from './lib/db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3001;
@@ -66,7 +72,7 @@ app.post('/api/auth/logout', logoutRoute);
 // ─── /api/admin/notices — DB 조회 ───
 app.get('/api/admin/notices', requireAuth, async (req, res) => {
   try {
-    const limit = Math.min(Number(req.query.limit || 200), 500);
+    const limit = Math.min(Number(req.query.limit || 200), 5000);
     const filter = req.query.filter || 'all';  // all | agent | other
     let where = '';
     if (filter === 'agent') where = 'WHERE ai_is_agent = 1';
@@ -552,6 +558,103 @@ app.patch('/api/admin/cron-settings', requireAuth, async (req, res) => {
     res.status(400).json({ error: e.message });
   }
 });
+// ─── 해외 공고 크롤링 (v3) — 공고/수신자/스케줄 전부 채용공고 크롤링과 별개 ───
+app.get('/api/admin/overseas/notices', requireAuth, async (req, res) => {
+  try {
+    const items = await listOverseasNotices(req.query.limit || 200);
+    res.json({ items });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/api/admin/overseas/notices/:id', requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'invalid id' });
+    const item = await getOverseasNotice(id);
+    if (!item) return res.status(404).json({ error: 'not found' });
+    res.json(item);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/admin/overseas/recipients', requireAuth, async (_req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT id, email, name, active, created_at FROM overseas_recipients ORDER BY id`
+    );
+    res.json({ items: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/overseas/recipients', requireAuth, async (req, res) => {
+  try {
+    const { email, name } = req.body || {};
+    if (!email) return res.status(400).json({ error: 'email 필수' });
+    await addOverseasRecipient(email, name || null);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/admin/overseas/recipients/:email', requireAuth, async (req, res) => {
+  try {
+    await deactivateOverseasRecipient(req.params.email);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.patch('/api/admin/overseas/recipients/:id', requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'invalid id' });
+    const { email, name, active } = req.body || {};
+    await updateOverseasRecipient(id, { email, name, active });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/admin/overseas/cron-settings', requireAuth, async (_req, res) => {
+  try {
+    const s = await getOverseasCronSettings();
+    res.json({ ...s, next_run_at: computeNextRun(s) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.patch('/api/admin/overseas/cron-settings', requireAuth, async (req, res) => {
+  try {
+    await updateOverseasCronSettings(req.body || {});
+    const s = await getOverseasCronSettings();
+    res.json({ ok: true, settings: { ...s, next_run_at: computeNextRun(s) } });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.post('/api/admin/overseas/cron-settings/run-now', requireAuth, async (_req, res) => {
+  try {
+    const s = await getOverseasCronSettings();
+    fireOverseasCronChild(s.days_back, 'manual');
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// 기관(소스)별 크롤링 on/off
+app.get('/api/admin/overseas/sources', requireAuth, async (_req, res) => {
+  try { res.json({ items: await listOverseasSources() }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.patch('/api/admin/overseas/sources/:id', requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'invalid id' });
+    const { enabled } = req.body || {};
+    if (enabled === undefined) return res.status(400).json({ error: 'enabled 필수' });
+    await updateOverseasSource(id, { enabled });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 최근 실행 로그 (스케줄 페이지에서 표시)
+app.get('/api/admin/overseas/cron-runs', requireAuth, async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit || 10), 50);
+    const [rows] = await pool.query(
+      `SELECT id, started_at, finished_at, status, total_found, new_count, email_sent, error_msg
+       FROM overseas_cron_runs ORDER BY id DESC LIMIT ?`, [limit]
+    );
+    res.json({ items: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ─── 출퇴근 관리 — 메일플러그 크롤 ───
 // mode='cookie' : DB의 mailplug_cookies 주입해서 출퇴근 페이지 접근. (권장)
 // mode='auto'   : 영구 프로파일 + 세션 살아있어야 함 (deprecated)
@@ -931,6 +1034,32 @@ function fireCronChild(daysBack, source = 'schedule') {
   });
 }
 
+// 해외 공고 크롤링 — g2b cron 과 독립된 스케줄/가드
+let lastFiredOverseasKstDate = null;
+let overseasCronChildRunning = false;
+
+function fireOverseasCronChild(daysBack, source = 'schedule') {
+  if (overseasCronChildRunning) {
+    console.log(`[overseas-scheduler] (${source}) 이미 실행 중 — 스킵`);
+    return;
+  }
+  overseasCronChildRunning = true;
+  console.log(`[overseas-scheduler] (${source}) cron_overseas.js --days=${daysBack} 시작`);
+  const cp = spawn(process.execPath, ['cron_overseas.js', `--days=${daysBack}`], {
+    cwd: __dirname,
+    stdio: 'inherit',
+    env: process.env,
+  });
+  cp.on('exit', (code) => {
+    overseasCronChildRunning = false;
+    console.log(`[overseas-scheduler] cron_overseas.js 종료 (code=${code})`);
+  });
+  cp.on('error', (e) => {
+    overseasCronChildRunning = false;
+    console.error(`[overseas-scheduler] spawn 실패:`, e);
+  });
+}
+
 async function rehydrateLastFired() {
   // 부팅 시 — 오늘(KST)에 이미 cron 이 시작된 적이 있으면 재발화 방지.
   // dateStrings:true 라 started_at 은 'YYYY-MM-DD HH:MM:SS' 문자열, 커넥션 timezone +09:00.
@@ -945,6 +1074,18 @@ async function rehydrateLastFired() {
       lastFiredKstDate = todayKst;
       console.log(`[cron-scheduler] 오늘(${todayKst}) 이미 실행 기록 존재 — 재발화 방지`);
     }
+    // 해외 공고 — 테이블 미생성 상태 (migrate_overseas.mjs 미실행) 도 허용
+    try {
+      const [[o]] = await pool.query(
+        `SELECT started_at FROM overseas_cron_runs
+         WHERE started_at >= ? ORDER BY id DESC LIMIT 1`,
+        [`${todayKst} 00:00:00`]
+      );
+      if (o) {
+        lastFiredOverseasKstDate = todayKst;
+        console.log(`[overseas-scheduler] 오늘(${todayKst}) 이미 실행 기록 존재 — 재발화 방지`);
+      }
+    } catch { /* overseas 테이블 없으면 무시 */ }
   } catch (e) {
     console.error('[cron-scheduler] rehydrate 실패:', e.message);
   }
@@ -965,6 +1106,22 @@ async function tick() {
   }
 }
 
+async function tickOverseas() {
+  try {
+    const s = await getOverseasCronSettings();
+    if (!s.enabled) return;
+    const { dateKey, hour, minute } = getKstParts();
+    if (lastFiredOverseasKstDate === dateKey) return;
+    if (hour === s.hour && minute === s.minute) {
+      lastFiredOverseasKstDate = dateKey;
+      fireOverseasCronChild(s.days_back, 'schedule');
+    }
+  } catch (e) {
+    // migrate_overseas.mjs 실행 전에는 테이블이 없어 실패할 수 있음 — 소음 방지 위해 조용히 스킵
+    if (!/doesn't exist/i.test(e.message)) console.error('[overseas-scheduler] tick 실패:', e.message);
+  }
+}
+
 app.listen(PORT, '127.0.0.1', async () => {
   console.log(`[server] http://127.0.0.1:${PORT}  (model=${process.env.OPENAI_MODEL || 'gpt-4.1-mini'}, key=${process.env.OPENAI_API_KEY ? '설정됨' : '미설정'})`);
   await rehydrateLastFired();
@@ -975,4 +1132,5 @@ app.listen(PORT, '127.0.0.1', async () => {
     console.error('[cron-scheduler] 부팅 시 설정 조회 실패:', e.message);
   }
   setInterval(tick, 60_000);
+  setInterval(tickOverseas, 60_000);
 });

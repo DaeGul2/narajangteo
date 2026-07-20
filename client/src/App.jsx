@@ -15,6 +15,10 @@ import BidLab from './pages/BidLab.jsx'
 import AttendanceLab from './pages/AttendanceLab.jsx'
 import AttendanceReport from './pages/AttendanceReport.jsx'
 import AttendanceHolidays from './pages/AttendanceHolidays.jsx'
+import OverseasNotices from './pages/OverseasNotices.jsx'
+import OverseasNoticeDetail from './pages/OverseasNoticeDetail.jsx'
+import OverseasRecipients from './pages/OverseasRecipients.jsx'
+import OverseasCronSettings from './pages/OverseasCronSettings.jsx'
 
 // ─ 좌측 drawer 메뉴 (그룹 단위로 향후 확장)
 const MENU_GROUPS = [
@@ -26,6 +30,14 @@ const MENU_GROUPS = [
       { to: '/admin/recipients', label: '수신자 관리' },
       { to: '/admin/cron', label: '스케줄 설정' },
       { to: '/crawl', label: '수동 크롤링' },
+    ],
+  },
+  {
+    title: '해외 공고 크롤링',
+    items: [
+      { to: '/overseas/notices', label: '공고 목록' },
+      { to: '/overseas/recipients', label: '수신자 관리' },
+      { to: '/overseas/cron', label: '스케줄 설정' },
     ],
   },
   {
@@ -128,6 +140,10 @@ export default function App() {
         <Route path="/admin/recipients" element={<Protected><Layout><AdminRecipients /></Layout></Protected>} />
         <Route path="/admin/cron" element={<Protected><Layout><AdminCronSettings /></Layout></Protected>} />
         <Route path="/crawl" element={<Protected><Layout><Crawl /></Layout></Protected>} />
+        <Route path="/overseas/notices" element={<Protected><Layout><OverseasNotices /></Layout></Protected>} />
+        <Route path="/overseas/notices/:id" element={<Protected><Layout><OverseasNoticeDetail /></Layout></Protected>} />
+        <Route path="/overseas/recipients" element={<Protected><Layout><OverseasRecipients /></Layout></Protected>} />
+        <Route path="/overseas/cron" element={<Protected><Layout><OverseasCronSettings /></Layout></Protected>} />
         <Route path="/bid/employee" element={<Protected><Layout><BidEmployee /></Layout></Protected>} />
         <Route path="/bid/employee/:id" element={<Protected><Layout><BidEmployeeDetail /></Layout></Protected>} />
         <Route path="/bid/projects" element={<Protected><Layout><BidProject /></Layout></Protected>} />
