@@ -20,6 +20,19 @@ async function fetchText(url, { cookie = null, timeoutMs = 30000 } = {}) {
   return res;
 }
 
+// 웹방화벽 차단 페이지는 HTTP 200 으로 내려온다. 그대로 파싱하면 "0건 수집" 이 되어
+// 소스가 정상인 것처럼 보이고 공고를 영구히 놓치므로, 명시적으로 에러를 던진다.
+const BLOCK_SIGNS = [
+  'Web firewall security policies',
+  '비정상적인 접근',
+  'Access Denied',
+];
+function assertNotBlocked(html, label) {
+  if (BLOCK_SIGNS.some(s => html.includes(s))) {
+    throw new Error(`${label}: 웹방화벽 차단 (서버 IP 차단 추정 — 해당 기관 사이트에 IP 허용 요청 필요)`);
+  }
+}
+
 // kecthai.kr 은 중간 인증서 누락으로 Node fetch 가 TLS 검증 실패 →
 // 이 호스트에 한해 node:https 로 검증 완화해서 GET (공개 게시판 읽기 전용)
 function httpsGetInsecure(url, timeoutMs = 30000) {
@@ -93,6 +106,7 @@ async function crawlKcca() {
   }
   if (!res.ok) throw new Error(`KCCA list HTTP ${res.status}`);
   const html = await res.text();
+  assertNotBlocked(html, 'KCCA');
 
   const items = [];
   const rows = html.split(/<tr class="bbsList">/).slice(1);
@@ -114,6 +128,7 @@ async function crawlKcca() {
 // ── 태국한국교육원 (KEC) — 공지사항 게시판 ──
 async function crawlKec() {
   const html = await httpsGetInsecure('https://kecthai.kr/sub/news/1-1.php');
+  assertNotBlocked(html, 'KEC');
 
   const items = [];
   const re = /<tr onclick="location\.href='(\/sub\/news\/1-1-detail\.php\?idx=(\d+))';">([\s\S]*?)<\/tr>/g;
@@ -143,6 +158,7 @@ async function crawlKoipa() {
       const res = await fetchText(url);
       if (!res.ok) throw new Error(`KOIPA(${menuCd}, ${kw}) HTTP ${res.status}`);
       const html = await res.text();
+      assertNotBlocked(html, 'KOIPA');
       const out = [];
       const re = /pageviewform\('(\d+)'\);">([\s\S]*?)<\/a>([\s\S]*?)<\/tr>/g;
       let m;
@@ -175,6 +191,7 @@ async function crawlBizinfo() {
     const res = await fetchText(url);
     if (!res.ok) throw new Error(`bizinfo(${kw}) HTTP ${res.status}`);
     const html = await res.text();
+    assertNotBlocked(html, 'bizinfo');
     const out = [];
     const re = /<a href=\s*"[^"]*selectSIIA200Detail\.do\?[^"]*pblancId=(PBLN_\d+)"[^>]*>([\s\S]*?)<\/a>([\s\S]*?)<\/tr>/g;
     let m;
@@ -207,6 +224,7 @@ async function crawlKto() {
       const res = await fetchText(url);
       if (!res.ok) throw new Error(`KTO tender(${tabMode}, ${kw}) HTTP ${res.status}`);
       const html = await res.text();
+      assertNotBlocked(html, `KTO tender(${tabMode})`);
       const out = [];
       const re = /<a href="(\/publicTenderList\/publicTenderView\?tabMode=[^"]*bbsSeq=(\d+))">\s*<span class="text txt-subject">([\s\S]*?)<\/span>[\s\S]*?<\/a>([\s\S]*?)<\/li>/g;
       let m;
@@ -239,6 +257,7 @@ async function crawlKto() {
     const res = await fetchText(url);
     if (!res.ok) throw new Error(`KTO announcement(${kw}) HTTP ${res.status}`);
     const html = await res.text();
+    assertNotBlocked(html, 'KTO announcement');
     const out = [];
     const re = /<div class="subject"><a href="(\/announcementList\/pssrpView\?pssrpSeqEnc=[^"]*)">([\s\S]*?)<\/a><\/div>([\s\S]*?)<\/dl>\s*<\/div>/g;
     let m;
@@ -274,6 +293,7 @@ async function crawlSuhyup() {
     const res = await fetchText(url);
     if (!res.ok) throw new Error(`수협(${kw}) HTTP ${res.status}`);
     const html = await res.text();
+    assertNotBlocked(html, '수협');
     const out = [];
     const re = /<tr id="artclRows_23_(\d+)"[\s\S]*?<a href="(\/bbs\/suhyup\/23\/\d+\/artclView\.do)"[\s\S]*?<strong>([\s\S]*?)<\/strong>([\s\S]*?)<\/tr>/g;
     let m;
@@ -300,6 +320,7 @@ async function crawlAt() {
     const res = await fetchText(url);
     if (!res.ok) throw new Error(`aT(${kw}) HTTP ${res.status}`);
     const html = await res.text();
+    assertNotBlocked(html, 'aT');
     const out = [];
     const re = /<td class="title">\s*<a href="([^"]*document_srl=(\d+))"[^>]*>([\s\S]*?)<\/a>([\s\S]*?)<\/tr>/g;
     let m;
@@ -338,6 +359,7 @@ async function crawlKotra() {
     });
     if (!res.ok) throw new Error(`KOTRA(${kw}) HTTP ${res.status}`);
     const html = await res.text();
+    assertNotBlocked(html, 'KOTRA');
     const out = [];
     const re = /<a href="javascript:fn_selectBizMntInfoDetail\('([^']*dtlBizMntNo=([^&']+)[^']*)'\);">([\s\S]*?)<\/a>([\s\S]*?)<\/ul>/g;
     let m;
