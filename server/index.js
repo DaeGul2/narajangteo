@@ -1131,6 +1131,14 @@ app.listen(PORT, '127.0.0.1', async () => {
   } catch (e) {
     console.error('[cron-scheduler] 부팅 시 설정 조회 실패:', e.message);
   }
+  // 해외 스케줄도 같이 남긴다 — 비활성인 걸 모르고 "메일이 왜 안 오지" 로 헤매기 쉬움
+  try {
+    const o = await getOverseasCronSettings();
+    console.log(`[overseas-scheduler] 활성=${!!o.enabled}, ${String(o.hour).padStart(2,'0')}:${String(o.minute).padStart(2,'0')} KST`);
+    if (!o.enabled) console.log('[overseas-scheduler] ⚠ 비활성 상태 — 스케줄 설정에서 켜야 자동 발송됩니다');
+  } catch (e) {
+    console.error('[overseas-scheduler] 부팅 시 설정 조회 실패:', e.message);
+  }
   setInterval(tick, 60_000);
   setInterval(tickOverseas, 60_000);
 });
