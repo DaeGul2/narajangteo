@@ -21,7 +21,7 @@ import { summarize } from './lib/summarize.js';
 import { classifyBatch } from './lib/aiClassify.js';
 import { buildReportMarkdown, markdownToHtml } from './lib/report.js';
 import { sendReport } from './lib/email.js';
-import { existsBidNos, insertNotice, startCronRun, finishCronRun, getActiveRecipients, getCronSettings } from './lib/db.js';
+import { existsBidNos, insertNotice, markNoticesEmailSent, startCronRun, finishCronRun, getActiveRecipients, getCronSettings } from './lib/db.js';
 import { saveFiles } from './lib/fileStore.js';
 import archiver from 'archiver';
 import { Writable } from 'node:stream';
@@ -177,7 +177,7 @@ async function main() {
         prev_history: it.prevHistory || [],
         summary_md: it.summary_md,
         files_meta: it.files_meta,
-        email_sent_at: new Date(),
+        email_sent_at: null,  // 발송 성공 후 markNoticesEmailSent 로 기록
       });
     }
     console.log(`[cron] DB INSERT ${newCount}건`);
@@ -225,6 +225,7 @@ async function main() {
     } else {
       await sendReport({ subject, html, text: md, attachments, to: recipients });
       emailSent = true;
+      await markNoticesEmailSent(newItems.map(i => i.bidNo));
       console.log(`[cron] 이메일 발송 완료 → ${recipients.length}명: ${recipients.map(r => r.email).join(', ')}`);
     }
 

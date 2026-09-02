@@ -527,6 +527,15 @@ export async function insertNotice(rec) {
   await pool.execute(sql, params);
 }
 
+// 이메일 발송 성공 후 호출 — 발송 시각 기록
+export async function markNoticesEmailSent(bidNos) {
+  if (!bidNos.length) return;
+  await pool.query(
+    `UPDATE notices SET email_sent_at = NOW() WHERE bid_no IN (?)`,
+    [bidNos]
+  );
+}
+
 // cron 스케줄 (단일행 id=1)
 export async function getCronSettings() {
   const [rows] = await pool.query(
