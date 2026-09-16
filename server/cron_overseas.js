@@ -41,6 +41,9 @@ const SOURCE_HINT = {
   koipa:   { branchThai: false, orgHint: '한국지식재산보호원 (본사 공용 공고 게시판)' },
   at:      { branchThai: false, orgHint: 'aT 아세안지역본부 방콕지사 (인도 등 타국 공고도 올라옴)' },
   bizinfo: { branchThai: false, orgHint: '기업마당 (전국 지원사업 포털)' },
+  kofice:  { branchThai: false, orgHint: '한국국제문화교류진흥원 KOFICE (본사 입찰공고 게시판)' },
+  kocca:   { branchThai: false, orgHint: '한국콘텐츠진흥원 KOCCA (본사 지원공고·사업공고 게시판)' },
+  gbsa:    { branchThai: false, orgHint: '경기도경제과학진흥원 GBSA (본사 입찰정보 게시판)' },
   g2b:     { branchThai: false, orgHint: null },   // 검색 행의 발주기관명 그대로
 };
 export function classifyInput(it) {

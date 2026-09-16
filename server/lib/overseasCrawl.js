@@ -80,6 +80,8 @@ function normDate(raw) {
   const s = String(raw).trim();
   let m = s.match(/(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})/);
   if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+  m = s.match(/(?:^|[^\d])(\d{2})\.(\d{2})\.(\d{2})(?!\d)/);   // KOCCA "26.09.15"
+  if (m) return `20${m[1]}-${m[2]}-${m[3]}`;
   m = s.match(/([A-Za-z]{3})[.\s]+(\d{1,2})[,.\s]+(\d{4})/);
   if (m && MONTHS[m[1].toLowerCase()]) {
     return `${m[3]}-${MONTHS[m[1].toLowerCase()]}-${m[2].padStart(2, '0')}`;
@@ -218,80 +220,6 @@ async function crawlBizinfo() {
     }
     return out;
   });
-}
-
-// ── 한국관광공사 (KTO / 투어라즈) — 입찰공고 2탭 + 공고·공모 ──
-async function crawlKto() {
-  const items = [];
-  const seen = new Set();
-
-  // 입찰공고: KTO 자체(ktoip) + 유관기관(other)
-  for (const tabMode of ['ktoip', 'other']) {
-    const got = await collectByKeyword(async (kw) => {
-      const url = `https://touraz.kr/publicTenderList?tabMode=${tabMode}&searchCd=all&searchText=${encodeURIComponent(kw)}&curPage=1&cntPerPage=30`;
-      const res = await fetchText(url);
-      if (!res.ok) throw new Error(`KTO tender(${tabMode}, ${kw}) HTTP ${res.status}`);
-      const html = await res.text();
-      assertNotBlocked(html, `KTO tender(${tabMode})`);
-      const out = [];
-      const re = /<a href="(\/publicTenderList\/publicTenderView\?tabMode=[^"]*bbsSeq=(\d+))">\s*<span class="text txt-subject">([\s\S]*?)<\/span>[\s\S]*?<\/a>([\s\S]*?)<\/li>/g;
-      let m;
-      while ((m = re.exec(html)) !== null) {
-        const [, path, bbsSeq, titleRaw, rest] = m;
-        const title = stripTags(titleRaw);
-        if (!title) continue;
-        // col-date 가 2개(마감일/등록일) — 마지막 것이 등록일
-        const dates = [...rest.matchAll(/col-date"><strong>([^<]*)<\/strong>/g)]
-          .map(x => normDate(x[1])).filter(Boolean);
-        out.push({
-          noticeKey: `tender-${tabMode}-${bbsSeq}`,
-          title,
-          url: `https://touraz.kr${path.replace(/&amp;/g, '&')}`,
-          postedAt: dates.length ? dates[dates.length - 1] : null,
-        });
-      }
-      return out;
-    });
-    for (const it of got) {
-      if (seen.has(it.noticeKey)) continue;
-      seen.add(it.noticeKey);
-      items.push(it);
-    }
-  }
-
-  // 공고·공모 (announcementList)
-  const anns = await collectByKeyword(async (kw) => {
-    const url = `https://touraz.kr/announcementList?searchCd=all&searchText=${encodeURIComponent(kw)}&curPage=1&cntPerPage=30`;
-    const res = await fetchText(url);
-    if (!res.ok) throw new Error(`KTO announcement(${kw}) HTTP ${res.status}`);
-    const html = await res.text();
-    assertNotBlocked(html, 'KTO announcement');
-    const out = [];
-    const re = /<div class="subject"><a href="(\/announcementList\/pssrpView\?pssrpSeqEnc=[^"]*)">([\s\S]*?)<\/a><\/div>([\s\S]*?)<\/dl>\s*<\/div>/g;
-    let m;
-    while ((m = re.exec(html)) !== null) {
-      const [, path, titleRaw, rest] = m;
-      const title = stripTags(titleRaw);
-      if (!title) continue;
-      const posted = normDate(rest.match(/등록일\s*<\/dt>[\s\S]*?<dd>\s*([\d.\-]+)/)?.[1]);
-      out.push({
-        // pssrpSeqEnc 는 목록을 그릴 때마다 새로 암호화돼 매 크롤마다 값이 달라진다.
-        // (링크 자체는 계속 유효) → 중복 저장 방지를 위해 제목+등록일 기반 키를 쓴다.
-        noticeKey: `ann-${contentKey(title, posted || '')}`,
-        title,
-        url: `https://touraz.kr${path.replace(/&amp;/g, '&')}`,
-        postedAt: posted,
-      });
-    }
-    return out;
-  });
-  for (const it of anns) {
-    if (seen.has(it.noticeKey)) continue;
-    seen.add(it.noticeKey);
-    items.push(it);
-  }
-
-  return items;
 }
 
 // ── 수협중앙회 방콕무역지원센터 — 입찰공고 게시판 첫 페이지 전체 (v4: 키워드 없이 → GPT 판별) ──
@@ -434,13 +362,115 @@ async function crawlG2b({ daysBack = 5 } = {}) {
   return out;
 }
 
+// ── 한국국제문화교류진흥원 (KOFICE) — 입찰공고 게시판 첫 페이지 전체 (v4.1) ──
+// 코리아시즌(베트남·태국), K-브랜드 융복합 행사(태국·일본) 등 태국 대형 운영대행 발주처
+async function crawlKofice() {
+  const res = await fetchText('https://kofice.or.kr/www/bbs/list.do?mnucd=171&scBbsMngSn=8');
+  if (!res.ok) throw new Error(`KOFICE HTTP ${res.status}`);
+  const html = await res.text();
+  assertNotBlocked(html, 'KOFICE');
+  const out = [];
+  const re = /onclick="return goView\((\d+),\s*'?[YN]'?\)">([\s\S]*?)<\/a>([\s\S]*?)<\/tr>/g;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const [, sn, titleRaw, rest] = m;
+    const title = stripTags(titleRaw);
+    if (!title) continue;
+    out.push({
+      noticeKey: sn,
+      title,
+      url: `https://kofice.or.kr/www/bbs/view.do?mnucd=171&scBbsMngSn=8&bbsSn=${sn}`,
+      postedAt: normDate(rest.match(/data-th="게시일">\s*([\d.\-]+)/)?.[1]),
+      status: stripTags(rest.match(/class="state[^"]*">([\s\S]*?)<\/span>/)?.[1]) || null,
+    });
+  }
+  return out;
+}
+
+// ── 한국콘텐츠진흥원 (KOCCA) — 지원공고(pims) + 사업공고(B0000204, 타 기관 공고 모음) 첫 페이지 전체 (v4.1) ──
+async function crawlKocca() {
+  const items = [];
+  // 지원공고 — 공고일·접수기간 있음
+  {
+    const res = await fetchText('https://www.kocca.kr/kocca/pims/list.do?menuNo=204104');
+    if (!res.ok) throw new Error(`KOCCA 지원공고 HTTP ${res.status}`);
+    const html = await res.text();
+    assertNotBlocked(html, 'KOCCA');
+    const re = /<a href="\/kocca\/pims\/view\.do\?intcNo=([A-Za-z0-9]+)[^"]*">([\s\S]*?)<\/a>([\s\S]*?)<\/tr>/g;
+    let m;
+    while ((m = re.exec(html)) !== null) {
+      const [, id, titleRaw, rest] = m;
+      const title = stripTags(titleRaw);
+      if (!title) continue;
+      const period = stripTags(rest.match(/data-label="접수기간">([\s\S]*?)<\/td>/)?.[1]);
+      const endRaw = period && period.includes('~') ? period.split('~').pop() : null;
+      items.push({
+        noticeKey: `pims-${id}`,
+        title,
+        url: `https://www.kocca.kr/kocca/pims/view.do?intcNo=${id}&menuNo=204104`,
+        postedAt: normDate(rest.match(/data-label="공고일">\s*([\d.\-]+)/)?.[1]),
+        deadline: normDate(endRaw),
+      });
+    }
+  }
+  // 사업공고 — KOTRA 등 타 기관 공고 모음 (기관 컬럼 있음)
+  {
+    const res = await fetchText('https://www.kocca.kr/kocca/bbs/list/B0000204.do?categorys=2&subcate=50&cateCode=0&menuNo=204897');
+    if (!res.ok) throw new Error(`KOCCA 사업공고 HTTP ${res.status}`);
+    const html = await res.text();
+    assertNotBlocked(html, 'KOCCA');
+    const re = /<a href="\/kocca\/bbs\/view\/B0000204\/(\d+)\.do[^"]*">([\s\S]*?)<\/a>([\s\S]*?)<\/tr>/g;
+    let m;
+    while ((m = re.exec(html)) !== null) {
+      const [, id, titleRaw, rest] = m;
+      const title = stripTags(titleRaw);
+      if (!title) continue;
+      const org = stripTags(rest.match(/data-label="기관">([\s\S]*?)<\/td>/)?.[1]);
+      items.push({
+        noticeKey: `biz-${id}`,
+        title,
+        url: `https://www.kocca.kr/kocca/bbs/view/B0000204/${id}.do?menuNo=204897`,
+        postedAt: normDate(rest.match(/data-label="등록일">\s*([\d.\-]+)/)?.[1]),
+        agency: org ? `${org} (KOCCA 사업공고)` : undefined,
+      });
+    }
+  }
+  return items;
+}
+
+// ── 경기도경제과학진흥원 (GBSA) — 입찰정보 게시판 첫 페이지 전체 (v4.1) ──
+// 방콕 GBC 운영·DIGITAL GBC 현지 대행운영자 모집, 태국 전시·수출사업 발주처
+async function crawlGbsa() {
+  const res = await fetchText('https://www.gbsa.or.kr/board/bid_info.do');
+  if (!res.ok) throw new Error(`GBSA HTTP ${res.status}`);
+  const html = await res.text();
+  assertNotBlocked(html, 'GBSA');
+  const out = [];
+  const re = /<a href="\/board\/bid_info\.do\?nttId=(\d+)[^"]*">([\s\S]*?)<\/a>([\s\S]*?)<\/tr>/g;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const [, id, titleRaw, rest] = m;
+    const title = stripTags(titleRaw);
+    if (!title) continue;
+    out.push({
+      noticeKey: id,
+      title,
+      url: `https://www.gbsa.or.kr/board/bid_info.do?nttId=${id}`,
+      postedAt: normDate(rest.match(/<td>\s*(\d{4}-\d{2}-\d{2})\s*<\/td>/)?.[1]),
+    });
+  }
+  return out;
+}
+
 const CRAWLERS = {
   g2b: crawlG2b,
+  kofice: crawlKofice,
+  kocca: crawlKocca,
+  gbsa: crawlGbsa,
   kcca: crawlKcca,
   kec: crawlKec,
   koipa: crawlKoipa,
   bizinfo: crawlBizinfo,
-  kto: crawlKto,
   suhyup: crawlSuhyup,
   at: crawlAt,
   kotra: crawlKotra,

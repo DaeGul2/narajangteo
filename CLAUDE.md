@@ -28,12 +28,16 @@
   금액은 첨부(HWP/PDF)에만 있는 경우가 많아 null 흔함 → 첨부 텍스트 추출은 2단계(미구현). `ddayOf()` 로 KST 기준 D-day.
 - **검색 키워드 (`SEARCH_KEYWORDS`)**: `태국 방콕 치앙마이 푸켓 파타야 THAIFEX 동남아 아세안 ASEAN 메콩` — g2b·aT·기업마당·KTO 에서 사용.
   g2b 검색은 공백·대소문자 무시 부분일치라 영문 짧은 토큰은 오탐(`Thai`→`With AI`) → 제외. `한국관`(172건 중 5)·`바이어`·`수출상담회`·`임팩트`·`K-푸드` 는 1년치 테스트에서 태국 건 기여 0 → 제외.
-- **소스 9개** (`overseas_sources.source_key`):
+- **소스 11개** (`overseas_sources.source_key`):
   - `g2b` **신규** — `callSearchApi(kw, 100, days_back)` × 키워드 10개. 링크 `https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=…&bidPbancOrd=…`
   - `suhyup` `koipa` `kotra` — **키워드 없이** 게시판 첫 페이지 전체 → GPT 판별 (v3 은 키워드 검색)
   - `at` `bizinfo` — 키워드 검색 유지, 키워드 10개로 확장
-  - `kcca` `kec` — 전체 수집 (그대로)
-  - `kto` — 서버 IP 웹방화벽 차단 → OFF (로컬 IP 에선 정상 → IP 허용 요청 필요)
+  - `kcca` `kec` — 전체 수집 (그대로). `kcca` `kec` `kotra` 는 **태국 소재 기관 게시판 → 규칙 A** (`SOURCE_HINT.branchThai`)
+  - `kofice` `kocca` `gbsa` **v4.1 신규** (재조사 엑셀 S등급) — 입찰공고/지원공고+사업공고/입찰정보 첫 페이지 전체 → GPT 판별.
+    KOFICE 상세는 GET `view.do?…&bbsSn=`, KOCCA 지원공고는 접수기간 끝을 deadline 으로, 날짜 `26.09.15` 형식은 `normDate` 가 20yy 로.
+    SBA(ASP.NET 동적)·중진공(로그인 벽)은 파서 없이 나라장터 채널로 커버.
+  - `kto` — **삭제** (2026-09-16, 서버 IP 차단 → 사용자 결정). `migrate_overseas.mjs` 가 행을 지움.
+  - 판별 힌트 `cron_overseas.js SOURCE_HINT`: 본사 공용 게시판(수협·KOIPA·KOFICE·KOCCA·GBSA·기업마당·aT)은 지사명 대신 본사명을 GPT 에 줌 — 지사명("방콕지사")을 주면 국내 공고까지 A/B 로 오판(2026-09-16 실제 발생)
 - **스케줄**: 하루 2회 — `overseas_cron_settings.hour/minute`(오전, 09:55) + `hour2/minute2/enabled2`(오후, 15:00). `index.js` `tickOverseas` 슬롯별 가드, 부팅 시 슬롯 시각 이후 실행 기록으로 재수화.
 - **메일**: 발신명 "해외공고 크롤러"(`sendReport({fromName})`), 제목 `[해외공고] 태국 N건 · 동남아·아세안 M건 — 날짜`. 행마다 D-day 배지(D-7 이내 주황)·기관·제목(형광펜)·유형·금액·주제·요약. 마감 임박순.
   컷오프 `--mail-since=YYYY-MM-DD` > `OVERSEAS_POSTED_FROM` > `2026-01-01`.
@@ -41,7 +45,7 @@
 - **DB (v4 추가, `migrate_overseas.mjs` 멱등)**: `overseas_notices.grade, notice_type, topic, amount, ai_reason` (+`deadline`, `summary_md` 활용) · `overseas_cron_settings.hour2, minute2, enabled2`
 - **UI**: 공고 목록 — 등급 필터(A+B 기본)·유형·금액·마감 D-day / 상세 — 등급·판별근거·금액 / 스케줄 — 오전·오후 실행 시각
 - **1년치 테스트(2026-09-16, g2b 609건)**: A 41(재현율 100%) · B 106 · X 462 → 월 A 3.4건 · B 9건. 제목 판별 비용 ≈ $0.02/609건.
-- **다음 단계 후보**: 첨부 텍스트 추출(금액 정확도) · 재조사 엑셀 S등급 미크롤 5곳 파서(KOCCA 태국센터·중진공 GBC·경기 GBC·KOFICE·SBA) · KTO IP 허용
+- **다음 단계 후보**: 첨부 텍스트 추출(금액 정확도) · `regrade_overseas.mjs` 로 재판별 (`--null` / `--since=` / `--force` / `--reset-mail`)
 
 ---
 

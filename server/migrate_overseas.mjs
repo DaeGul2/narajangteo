@@ -97,9 +97,6 @@ const SOURCES_SEED = [
   ['bizinfo', '기업마당', 'https://www.bizinfo.go.kr',
    'https://www.bizinfo.go.kr/sii/siia/selectSIIA200View.do',
    '지원사업명 키워드 검색 (태국·방콕·치앙마이·푸켓·파타야·THAIFEX·동남아·아세안·ASEAN·메콩) → GPT 판별'],
-  ['kto', '한국관광공사 (KTO) 방콕지사', 'https://touraz.kr',
-   'https://touraz.kr/publicTenderList, https://touraz.kr/announcementList',
-   "입찰공고(KTO+유관기관 2탭) 및 공고·공모 키워드 검색 → GPT 판별. ⚠ 서버 IP 웹방화벽 차단으로 OFF"],
   ['suhyup', '수협중앙회 방콕무역지원센터', 'https://www.suhyup.co.kr',
    'https://www.suhyup.co.kr/bbs/suhyup/23/artclList.do',
    '입찰공고 게시판 첫 페이지 전체 (키워드 없이) → GPT 판별'],
@@ -109,6 +106,16 @@ const SOURCES_SEED = [
   ['kotra', '대한무역투자진흥공사 (KOTRA) 방콕무역관', 'https://www.kotra.or.kr/bangkok/index.do',
    'https://www.kotra.or.kr/bangkok/subList/40000000403',
    '방콕무역관 사업 안내 목록 전체 (키워드 없이) → GPT 판별'],
+  // v4.1 (2026-09-16) — 재조사 엑셀 S등급 추가. SBA(동적 페이지)·중진공(로그인)은 나라장터 채널로 커버.
+  ['kofice', '한국국제문화교류진흥원 (KOFICE)', 'https://kofice.or.kr',
+   'https://kofice.or.kr/www/bbs/list.do?mnucd=171&scBbsMngSn=8',
+   '입찰공고 게시판 첫 페이지 전체 (키워드 없이) → GPT 판별. 코리아시즌·K-브랜드 융복합 등 태국 운영대행 발주처'],
+  ['kocca', '한국콘텐츠진흥원 (KOCCA)', 'https://www.kocca.kr',
+   'https://www.kocca.kr/kocca/pims/list.do?menuNo=204104, https://www.kocca.kr/kocca/bbs/list/B0000204.do?menuNo=204897',
+   '지원공고 + 사업공고(타 기관 모음) 첫 페이지 전체 → GPT 판별. 태국 비즈니스센터 위탁용역 발주처'],
+  ['gbsa', '경기도경제과학진흥원 (GBSA)', 'https://www.gbsa.or.kr',
+   'https://www.gbsa.or.kr/board/bid_info.do',
+   '입찰정보 게시판 첫 페이지 전체 → GPT 판별. 방콕 GBC 운영·현지 대행운영자 모집'],
 ];
 
 // v4 컬럼 추가 (멱등) — overseas_notices 판별/요약 결과, overseas_cron_settings 오후 실행 슬롯
@@ -167,6 +174,9 @@ async function main() {
     if (rs.affectedRows > 0) srcSeeded++;
   }
   console.log(`  + overseas_sources 시드 ${srcSeeded}건 (총 ${SOURCES_SEED.length}개 시도)`);
+  // v4.1: KTO 제거 (서버 IP 차단 → 사용자 결정으로 소스 삭제)
+  const [del] = await conn.execute(`DELETE FROM overseas_sources WHERE source_key = 'kto'`);
+  if (del.affectedRows) console.log('  - overseas_sources: kto 삭제');
   // 수집 방식 설명은 항상 최신으로 (enabled 는 건드리지 않음)
   for (const [key, , , target, note] of SOURCES_SEED) {
     await conn.execute(`UPDATE overseas_sources SET method_note = ?, target_url = ? WHERE source_key = ?`, [note, target, key]);
