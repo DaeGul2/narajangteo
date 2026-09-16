@@ -32,7 +32,9 @@ function saveCache() {
 }
 
 const SYSTEM = `당신은 한국 공공기관 공고 제목을 보고 "태국(Thailand)과 관련된 공고인지" 판정합니다.
-발주 주체·사업 장소·대상 국가·참가자·바이어·계약 상대 중 하나라도 태국이면 관련. 한국에서 하든 태국에서 하든 무관.
+사업 장소·대상 국가·참가자·바이어·계약 상대 중 하나라도 태국이면 관련. 한국에서 하든 태국에서 하든 무관.
+⚠ 판정 근거는 **제목** 입니다. 함께 주는 기관명(org)은 힌트일 뿐이며, 기관명에 "방콕지사·태국사무소·동남아 IP센터" 같은 말이 있어도
+제목에 태국·권역 근거가 없으면 X 입니다 (본사 공용 게시판에 올라온 국내 사업이 대부분이기 때문).
 
 [등급]
 - "A": 제목에 태국 또는 태국 도시·태국 개최 행사명이 명시됨
@@ -57,20 +59,25 @@ const SYSTEM = `당신은 한국 공공기관 공고 제목을 보고 "태국(Th
  * @param {Array<{id:string, title:string, org?:string}>} items
  * @returns {Promise<Map<string, {grade:'A'|'B'|'X', type:string, topic:string, reason:string, by:'rule'|'gpt'|'rule+gpt'|'cache'}>>}
  */
-export async function classifyOverseas(items) {
+export async function classifyOverseas(items, { force = false } = {}) {
   loadCache();
   const out = new Map();
   const ruleA = new Set();
+  const ruleReason = new Map();
   const todo = [];
 
   for (const it of items) {
     const title = it.title || '';
-    const isA = THAI_RULE_RE.test(title);
-    if (isA) ruleA.add(it.id);
-    const cached = _cache[title];
+    // 규칙 A: ① 제목에 태국 명시  ② 태국 소재 기관(문화원·교육원·KOTRA 방콕무역관 담당사업)의 자체 게시판 → 주체가 태국
+    const isA = THAI_RULE_RE.test(title) || !!it.branchThai;
+    if (isA) {
+      ruleA.add(it.id);
+      ruleReason.set(it.id, it.branchThai && !THAI_RULE_RE.test(title) ? '태국 소재 기관(지사) 자체 게시판 — 주체가 태국' : '제목에 태국 명시 (규칙)');
+    }
+    const cached = force ? null : _cache[title];
     if (cached) {
       // 캐시된 GPT 결과에 규칙 A 를 덮어쓴다 (규칙이 항상 우선)
-      out.set(it.id, { ...cached, grade: isA ? 'A' : cached.grade, by: 'cache' });
+      out.set(it.id, { ...cached, grade: isA ? 'A' : cached.grade, reason: isA ? `${ruleReason.get(it.id)} · ${cached.reason}` : cached.reason, by: 'cache' });
     } else {
       todo.push(it);
     }
@@ -105,7 +112,8 @@ export async function classifyOverseas(items) {
             reason: String(r.reason || '').slice(0, 500),
           };
           _cache[item.title] = v;
-          out.set(item.id, { ...v, grade: ruleA.has(item.id) ? 'A' : v.grade, by: ruleA.has(item.id) ? 'rule+gpt' : 'gpt' });
+          const a = ruleA.has(item.id);
+          out.set(item.id, { ...v, grade: a ? 'A' : v.grade, reason: a ? `${ruleReason.get(item.id)} · ${v.reason}` : v.reason, by: a ? 'rule+gpt' : 'gpt' });
         }
       } catch (e) {
         console.error('[overseasClassify] GPT batch failed:', e.message);
@@ -118,7 +126,7 @@ export async function classifyOverseas(items) {
   for (const it of items) {
     if (out.has(it.id)) continue;
     if (ruleA.has(it.id)) {
-      out.set(it.id, { grade: 'A', type: '', topic: '', reason: '제목에 태국 명시 (규칙)', by: 'rule' });
+      out.set(it.id, { grade: 'A', type: '', topic: '', reason: ruleReason.get(it.id), by: 'rule' });
     } else {
       out.set(it.id, { grade: null, type: '', topic: '', reason: 'GPT 미판정', by: 'none' });
     }

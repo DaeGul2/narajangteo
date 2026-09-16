@@ -13,6 +13,8 @@
 //   node cron_overseas.js --days=365 --only=g2b --mail-since=2026-09-09
 //       → 백필: g2b 1년치 저장, 메일은 게시일 2026-09-09 이후 것만 (첫 실행용)
 //   node cron_overseas.js --no-mail               # 저장·판별만
+//   node cron_overseas.js --include-unsent-since=2026-09-16
+//       → 이번 실행 신규 외에, 그 날짜 이후 저장됐지만 아직 메일 안 나간 A·B 도 같이 발송 (재판별·발송 실패 복구용)
 //
 // 게시일 컷오프(POSTED_FROM / --mail-since): 오래된 공고가 메일에 실리지 않도록 그 이후 것만 발송.
 // 게시일이 없는 공고는 최신 여부를 알 수 없으므로 놓치지 않도록 발송에 포함한다.
@@ -27,6 +29,24 @@ import pool, {
   getOverseasCronSettings,
 } from './lib/db.js';
 import { crawlSource, KEYWORDS } from './lib/overseasCrawl.js';
+
+// 판별 힌트 — 소스별로 "게시판 주인이 태국 소재 기관인가" 와 GPT 에 줄 기관명
+//   branchThai: 문화원·교육원·KOTRA 방콕무역관(담당사업 목록) 은 게시판 자체가 태국 주체 → 규칙 A
+//   orgHint   : 수협·지식재산보호원은 본사 공용 게시판이라 지사명을 주면 GPT 가 오판 → 본사명으로
+const SOURCE_HINT = {
+  kcca:    { branchThai: true,  orgHint: '주태국 한국문화원 (태국 방콕 소재)' },
+  kec:     { branchThai: true,  orgHint: '태국한국교육원 (태국 방콕 소재)' },
+  kotra:   { branchThai: true,  orgHint: 'KOTRA 방콕무역관 담당 사업 목록' },
+  suhyup:  { branchThai: false, orgHint: '수협중앙회 (본사 공용 입찰공고 게시판)' },
+  koipa:   { branchThai: false, orgHint: '한국지식재산보호원 (본사 공용 공고 게시판)' },
+  at:      { branchThai: false, orgHint: 'aT 아세안지역본부 방콕지사 (인도 등 타국 공고도 올라옴)' },
+  bizinfo: { branchThai: false, orgHint: '기업마당 (전국 지원사업 포털)' },
+  g2b:     { branchThai: false, orgHint: null },   // 검색 행의 발주기관명 그대로
+};
+export function classifyInput(it) {
+  const h = SOURCE_HINT[it.source] || {};
+  return { title: it.title, org: h.orgHint === null || h.orgHint === undefined ? (it.organization || '') : h.orgHint, branchThai: !!h.branchThai };
+}
 import { classifyOverseas } from './lib/overseasClassify.js';
 import { summarizeOverseasNotice, ddayOf } from './lib/overseasSummarize.js';
 import { sendReport } from './lib/email.js';
@@ -36,6 +56,7 @@ function arg(name, def) {
   return m ? m.split('=').slice(1).join('=') : def;
 }
 const NO_MAIL = process.argv.includes('--no-mail');
+const INCLUDE_UNSENT_SINCE = arg('include-unsent-since', null);
 const ONLY = (arg('only', '') || '').split(',').map(s => s.trim()).filter(Boolean);
 // 이 날짜 이후 게시글만 메일 발송 (저장은 전부 — 중복 판정용)
 const POSTED_FROM = arg('mail-since', null) || process.env.OVERSEAS_POSTED_FROM || '2026-01-01';
@@ -170,7 +191,7 @@ async function main() {
     // ── 2) 판별 (규칙 A → GPT B/X) ──
     const graded = { A: [], B: [], X: [], none: [] };
     if (fresh.length) {
-      const cls = await classifyOverseas(fresh.map((f, i) => ({ id: String(i), title: f.title, org: f.organization })));
+      const cls = await classifyOverseas(fresh.map((f, i) => ({ id: String(i), ...classifyInput(f) })));
       for (let i = 0; i < fresh.length; i++) {
         const r = cls.get(String(i)) || { grade: null, type: '', topic: '', reason: 'GPT 미판정' };
         fresh[i].grade = r.grade;
@@ -190,8 +211,35 @@ async function main() {
     const mailable = it => !it.postedAt || it.postedAt >= POSTED_FROM;
     const listA = [...graded.A, ...graded.none].filter(mailable);
     const listB = graded.B.filter(mailable);
+
+    // --include-unsent-since: 이미 저장됐지만 아직 메일 안 나간 A·B 도 합류 (요약은 이미 돼 있으면 그대로)
+    if (INCLUDE_UNSENT_SINCE) {
+      const [rows] = await pool.query(
+        `SELECT n.source, s.name AS source_name, n.notice_key, n.title, n.organization, n.url, n.posted_at, n.deadline, n.amount,
+                n.grade, n.notice_type, n.topic, n.summary_md
+         FROM overseas_notices n LEFT JOIN overseas_sources s ON s.source_key = n.source
+         WHERE n.email_sent_at IS NULL AND n.grade IN ('A','B') AND n.created_at >= ?`, [INCLUDE_UNSENT_SINCE]
+      );
+      const have = new Set([...listA, ...listB].map(x => `${x.source}|${x.noticeKey}`));
+      let added = 0;
+      for (const r of rows) {
+        if (have.has(`${r.source}|${r.notice_key}`)) continue;
+        const it = {
+          source: r.source, sourceName: r.source_name || r.source, noticeKey: r.notice_key, title: r.title,
+          organization: r.organization, url: r.url, postedAt: r.posted_at, deadline: r.deadline, amount: r.amount,
+          grade: r.grade, noticeType: r.notice_type, topic: r.topic,
+          summary: r.summary_md ? String(r.summary_md).split('\n\n')[0] : null,
+          _needSummary: !r.summary_md && r.source !== 'g2b',
+        };
+        if (!mailable(it)) continue;
+        (r.grade === 'A' ? listA : listB).push(it);
+        added++;
+      }
+      console.log(`[overseas-cron] --include-unsent-since=${INCLUDE_UNSENT_SINCE}: 미발송 A·B ${added}건 합류`);
+    }
     for (const it of [...listA, ...listB]) {
       if (it.source === 'g2b') continue;   // deadline/amount 이미 있음 (없으면 미상)
+      if (it.summary !== undefined && !it._needSummary) continue;   // 합류분 중 이미 요약된 건
       try {
         const s = await summarizeOverseasNotice({ title: it.title, url: it.url, organization: it.organization });
         if (s.error) console.log(`[overseas-cron]   요약 스킵 ${it.source}/${it.noticeKey}: ${s.error}`);

@@ -95,7 +95,7 @@ export async function summarizeOverseasNotice({ title, url, organization }) {
     return {
       deadline: dl,
       deadlineKind: j.deadline_kind || null,
-      amount: j.amount ? String(j.amount).slice(0, 100) : null,
+      amount: j.amount && !/^\s*0\s*(원|THB|USD)?\s*$/i.test(String(j.amount)) ? String(j.amount).slice(0, 100) : null,
       topic: j.topic ? String(j.topic).slice(0, 100) : null,
       summary: j.summary ? String(j.summary) : null,
       contact: j.contact ? String(j.contact) : null,
