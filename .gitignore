@@ -46,7 +46,8 @@ NCS_채용대행_연도별수주현황.xlsx     # 사내 자료
 _ncs_data/*.py
 _ncs_data/*.html
 _ncs_data/*.txt
-_ncs_data/overseas_classify_cache.json   # 해외공고 판별 캐시 — 서버에서 자라므로 커밋 X
+# 해외공고 판별 캐시 — 서버에서 자라므로 커밋 X
+_ncs_data/overseas_classify_cache.json
 
 # ───────── Python 백업 흔적 (이전 버전) ─────────
 server-python-backup/
