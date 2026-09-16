@@ -69,10 +69,14 @@ export async function classifyOverseas(items, { force = false } = {}) {
   for (const it of items) {
     const title = it.title || '';
     // 규칙 A: ① 제목에 태국 명시  ② 태국 소재 기관(문화원·교육원·KOTRA 방콕무역관 담당사업)의 자체 게시판 → 주체가 태국
-    const isA = THAI_RULE_RE.test(title) || !!it.branchThai;
+    // ③ 소스별 제도 규칙(forceA) — 해외민간네트워크·글로벌 거점 파트너사 등 태국 법인이 직접 응모 가능한 제도
+    const isA = THAI_RULE_RE.test(title) || !!it.branchThai || !!it.forceA;
     if (isA) {
       ruleA.add(it.id);
-      ruleReason.set(it.id, it.branchThai && !THAI_RULE_RE.test(title) ? '태국 소재 기관(지사) 자체 게시판 — 주체가 태국' : '제목에 태국 명시 (규칙)');
+      ruleReason.set(it.id,
+        THAI_RULE_RE.test(title) ? '제목에 태국 명시 (규칙)'
+        : it.branchThai ? '태국 소재 기관(지사) 자체 게시판 — 주체가 태국'
+        : (it.forceAReason || '소스 제도 규칙'));
     }
     const cached = force ? null : _cache[title];
     if (cached) {

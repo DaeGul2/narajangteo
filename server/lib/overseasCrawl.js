@@ -462,8 +462,59 @@ async function crawlGbsa() {
   return out;
 }
 
+// ── 서울경제진흥원 (SBA) — 사업공고 첫 페이지 전체 (v4.1). ASP.NET GridView 지만 목록은 서버 렌더 ──
+async function crawlSba() {
+  const res = await fetchText('https://www.sba.seoul.kr/Pages/BusinessApply/Posting.aspx');
+  if (!res.ok) throw new Error(`SBA HTTP ${res.status}`);
+  const html = await res.text();
+  assertNotBlocked(html, 'SBA');
+  const out = [];
+  const rows = html.split(/<tr class="grid_list tbody"/).slice(1);
+  for (const row of rows) {
+    const mid = row.match(/PostingDetail\.aspx\?p=\d+&amp;mid=([0-9a-f-]{36})/i)?.[1];
+    const title = stripTags(row.match(/GridView1_new_name_\d+">([\s\S]*?)<\/span>/)?.[1]);
+    if (!mid || !title) continue;
+    const start = row.match(/lb_receipt_start_\d+">\s*([\d-]+)/)?.[1] || null;
+    const end = row.match(/lb_receipt_end_\d+">\s*([\d-]+)/)?.[1] || null;
+    out.push({
+      noticeKey: mid,
+      title,
+      url: `https://www.sba.seoul.kr/Pages/BusinessApply/PostingDetail.aspx?p=0&mid=${mid}`,
+      postedAt: normDate(start),   // 게시일 컬럼이 없어 접수 시작일 사용
+      deadline: normDate(end),
+    });
+  }
+  return out;
+}
+
+// ── 중소벤처기업진흥공단 해외지사화 포털 (kosme-jisahwa) — 공지사항 전체 (v4.1) ──
+// 본사 누리집 공지는 ajax(json)+로그인 벽이라, 해외민간네트워크 모집 공고가 공개로 뜨는 지사화 포털을 본다. https 미지원 → http
+async function crawlKosme() {
+  const res = await fetchText('http://kosme-jisahwa.com/community/list?type=notice');
+  if (!res.ok) throw new Error(`중진공 지사화 HTTP ${res.status}`);
+  const html = await res.text();
+  assertNotBlocked(html, '중진공');
+  const out = [];
+  const re = /<a href="\.\/view\?type=notice&(?:amp;)?no=(\d+)[^"]*">([\s\S]*?)<\/a>([\s\S]*?)<\/tr>/g;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const [, no, titleRaw, rest] = m;
+    const title = stripTags(titleRaw);
+    if (!title) continue;
+    out.push({
+      noticeKey: no,
+      title,
+      url: `http://kosme-jisahwa.com/community/view?type=notice&no=${no}`,
+      postedAt: normDate(rest.match(/text_center">\s*(\d{4}-\d{2}-\d{2})/)?.[1]),
+    });
+  }
+  return out;
+}
+
 const CRAWLERS = {
   g2b: crawlG2b,
+  sba: crawlSba,
+  kosme: crawlKosme,
   kofice: crawlKofice,
   kocca: crawlKocca,
   gbsa: crawlGbsa,

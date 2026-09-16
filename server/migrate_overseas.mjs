@@ -116,6 +116,12 @@ const SOURCES_SEED = [
   ['gbsa', '경기도경제과학진흥원 (GBSA)', 'https://www.gbsa.or.kr',
    'https://www.gbsa.or.kr/board/bid_info.do',
    '입찰정보 게시판 첫 페이지 전체 → GPT 판별. 방콕 GBC 운영·현지 대행운영자 모집'],
+  ['sba', '서울경제진흥원 (SBA)', 'https://www.sba.seoul.kr',
+   'https://www.sba.seoul.kr/Pages/BusinessApply/Posting.aspx',
+   '사업공고 첫 페이지 전체 → GPT 판별. 글로벌 거점 파트너사·리테일 채널 파트너사 모집 (태국 법인 직접 응모 가능)'],
+  ['kosme', '중소벤처기업진흥공단 해외지사화 포털', 'http://kosme-jisahwa.com',
+   'http://kosme-jisahwa.com/community/list?type=notice',
+   '지사화 포털 공지 전체 → 해외민간네트워크·해외지사화 모집공고는 규칙 A (태국 법인 직접 등록 가능 제도)'],
 ];
 
 // v4 컬럼 추가 (멱등) — overseas_notices 판별/요약 결과, overseas_cron_settings 오후 실행 슬롯

@@ -28,14 +28,16 @@
   금액은 첨부(HWP/PDF)에만 있는 경우가 많아 null 흔함 → 첨부 텍스트 추출은 2단계(미구현). `ddayOf()` 로 KST 기준 D-day.
 - **검색 키워드 (`SEARCH_KEYWORDS`)**: `태국 방콕 치앙마이 푸켓 파타야 THAIFEX 동남아 아세안 ASEAN 메콩` — g2b·aT·기업마당·KTO 에서 사용.
   g2b 검색은 공백·대소문자 무시 부분일치라 영문 짧은 토큰은 오탐(`Thai`→`With AI`) → 제외. `한국관`(172건 중 5)·`바이어`·`수출상담회`·`임팩트`·`K-푸드` 는 1년치 테스트에서 태국 건 기여 0 → 제외.
-- **소스 11개** (`overseas_sources.source_key`):
+- **소스 13개** (`overseas_sources.source_key`):
   - `g2b` **신규** — `callSearchApi(kw, 100, days_back)` × 키워드 10개. 링크 `https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=…&bidPbancOrd=…`
   - `suhyup` `koipa` `kotra` — **키워드 없이** 게시판 첫 페이지 전체 → GPT 판별 (v3 은 키워드 검색)
   - `at` `bizinfo` — 키워드 검색 유지, 키워드 10개로 확장
   - `kcca` `kec` — 전체 수집 (그대로). `kcca` `kec` `kotra` 는 **태국 소재 기관 게시판 → 규칙 A** (`SOURCE_HINT.branchThai`)
   - `kofice` `kocca` `gbsa` **v4.1 신규** (재조사 엑셀 S등급) — 입찰공고/지원공고+사업공고/입찰정보 첫 페이지 전체 → GPT 판별.
     KOFICE 상세는 GET `view.do?…&bbsSn=`, KOCCA 지원공고는 접수기간 끝을 deadline 으로, 날짜 `26.09.15` 형식은 `normDate` 가 20yy 로.
-    SBA(ASP.NET 동적)·중진공(로그인 벽)은 파서 없이 나라장터 채널로 커버.
+  - `sba` `kosme` **v4.1 신규** — SBA 사업공고(ASP.NET 이지만 목록은 서버 렌더, `PostingDetail.aspx?mid=GUID`, 접수 시작/종료일) ·
+    중진공 해외지사화 포털(`kosme-jisahwa.com`, http 만) 공지. 본사 누리집 공지는 ajax+로그인 벽이라 안 씀.
+    소스별 제도 규칙 `SOURCE_HINT.ruleRe` (해외민간네트워크 모집공고, SBA 글로벌 거점·파트너사) 매칭 시 규칙 A (`forceA`).
   - `kto` — **삭제** (2026-09-16, 서버 IP 차단 → 사용자 결정). `migrate_overseas.mjs` 가 행을 지움.
   - 판별 힌트 `cron_overseas.js SOURCE_HINT`: 본사 공용 게시판(수협·KOIPA·KOFICE·KOCCA·GBSA·기업마당·aT)은 지사명 대신 본사명을 GPT 에 줌 — 지사명("방콕지사")을 주면 국내 공고까지 A/B 로 오판(2026-09-16 실제 발생)
 - **스케줄**: 하루 2회 — `overseas_cron_settings.hour/minute`(오전, 09:55) + `hour2/minute2/enabled2`(오후, 15:00). `index.js` `tickOverseas` 슬롯별 가드, 부팅 시 슬롯 시각 이후 실행 기록으로 재수화.

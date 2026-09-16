@@ -44,11 +44,21 @@ const SOURCE_HINT = {
   kofice:  { branchThai: false, orgHint: '한국국제문화교류진흥원 KOFICE (본사 입찰공고 게시판)' },
   kocca:   { branchThai: false, orgHint: '한국콘텐츠진흥원 KOCCA (본사 지원공고·사업공고 게시판)' },
   gbsa:    { branchThai: false, orgHint: '경기도경제과학진흥원 GBSA (본사 입찰정보 게시판)' },
+  sba:     { branchThai: false, orgHint: '서울경제진흥원 SBA (사업공고 게시판)',
+             ruleRe: /글로벌\s*거점|해외\s*거점|리테일\s*채널|파트너사/, ruleReason: 'SBA 해외 거점·파트너사 제도 — 태국 법인 직접 응모 가능' },
+  kosme:   { branchThai: false, orgHint: '중소벤처기업진흥공단 해외지사화 포털 (공지사항)',
+             ruleRe: /(해외민간네트워크|해외지사화).*(모집|공고)/, ruleReason: '중진공 해외민간네트워크·지사화 제도 — 태국 법인 직접 등록 가능' },
   g2b:     { branchThai: false, orgHint: null },   // 검색 행의 발주기관명 그대로
 };
 export function classifyInput(it) {
   const h = SOURCE_HINT[it.source] || {};
-  return { title: it.title, org: h.orgHint === null || h.orgHint === undefined ? (it.organization || '') : h.orgHint, branchThai: !!h.branchThai };
+  const forceA = !!(h.ruleRe && h.ruleRe.test(it.title || ''));
+  return {
+    title: it.title,
+    org: h.orgHint === null || h.orgHint === undefined ? (it.organization || '') : h.orgHint,
+    branchThai: !!h.branchThai,
+    forceA, forceAReason: forceA ? h.ruleReason : null,
+  };
 }
 import { classifyOverseas } from './lib/overseasClassify.js';
 import { summarizeOverseasNotice, ddayOf } from './lib/overseasSummarize.js';
