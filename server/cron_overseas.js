@@ -211,6 +211,7 @@ async function main() {
     const mailable = it => !it.postedAt || it.postedAt >= POSTED_FROM;
     const listA = [...graded.A, ...graded.none].filter(mailable);
     const listB = graded.B.filter(mailable);
+    const skippedOld = graded.A.length + graded.none.length + graded.B.length - listA.length - listB.length;
 
     // --include-unsent-since: 이미 저장됐지만 아직 메일 안 나간 A·B 도 합류 (요약은 이미 돼 있으면 그대로)
     if (INCLUDE_UNSENT_SINCE) {
@@ -258,8 +259,7 @@ async function main() {
 
     // ── 4) 메일 ──
     const mailCount = listA.length + listB.length;
-    const skipped = graded.A.length + graded.none.length + graded.B.length - mailCount;
-    if (skipped) console.log(`[overseas-cron] ${skipped}건은 ${POSTED_FROM} 이전 게시글이라 메일 제외`);
+    if (skippedOld) console.log(`[overseas-cron] ${skippedOld}건은 ${POSTED_FROM} 이전 게시글이라 메일 제외`);
     if (mailCount && !NO_MAIL) {
       const recipients = await getActiveOverseasRecipients();
       if (recipients.length) {
