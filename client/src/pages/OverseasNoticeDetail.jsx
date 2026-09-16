@@ -34,9 +34,12 @@ export default function OverseasNoticeDetail() {
         <div className="kv"><span>출처</span><b>{item.source || '-'}</b></div>
         <div className="kv"><span>식별자</span><b className="mono">{item.notice_key}</b></div>
         <div className="kv"><span>기관</span><b>{item.organization || '-'}</b></div>
-        <div className="kv"><span>국가</span><b>{item.country || '-'}</b></div>
+        <div className="kv"><span>등급</span><b>{item.grade === 'A' ? 'A · 태국 확정' : item.grade === 'B' ? 'B · 동남아·아세안 권역' : item.grade === 'X' ? 'X · 제외' : '미판정'}</b></div>
+        <div className="kv"><span>유형 / 주제</span><b>{item.notice_type || '-'} {item.topic ? `· ${item.topic}` : ''}</b></div>
+        <div className="kv"><span>판별 근거</span><b className="small muted">{item.ai_reason || '-'}</b></div>
         <div className="kv"><span>게시일</span><b>{item.posted_at || '-'}</b></div>
-        <div className="kv"><span>마감일</span><b>{item.deadline || '-'}</b></div>
+        <div className="kv"><span>마감</span><b>{item.deadline || '-'}</b></div>
+        <div className="kv"><span>금액</span><b>{item.amount || '-'}</b></div>
         <div className="kv">
           <span>원문 링크</span>
           <b>

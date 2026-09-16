@@ -1,14 +1,53 @@
 # narajangteo — g2b 채용대행 공고 자동 수집·요약·발송 + 출퇴근 관리 + 해외 공고 크롤링
 
-**Version 3 · 2026-07-20**
+**Version 4 · 2026-09-16**
 
 > v1 (2026-05-13): g2b 채용 크롤러 + 입찰 모듈
 > v2 (2026-05-19): 출퇴근 관리 시스템 추가 (지각 룰 v1, 공휴일 캘린더, 리포트)
 > v3 (2026-07-20): 해외 공고 크롤링 (공공기관 방콕지사 모니터링) + 수신자 직원 셀렉트 전환
+> v4 (2026-09-16): 해외 공고 — 나라장터 소스 추가 + 규칙/GPT 2단계 판별(A/B/X) + 마감 D-day·금액·주제 요약 + 하루 2회 실행
 
 ---
 
-## 📌 해외 공고 크롤링 (v3) — 빠른 참조
+## ⚠️ 두 사업은 완전히 별개
+
+- **인사바른 채용대행** = g2b `채용` 크롤러 (`cron.js`, `notices`, `recipients`, `aiClassify.js`, 11:00 KST). **v4 에서 손대지 않음.**
+- **태국 법인 해외공고** = `cron_overseas.js`, `overseas_*` 테이블, 별도 수신자·스케줄·캐시(`_ncs_data/overseas_classify_cache.json`, git ignored).
+- 둘이 공유하는 건 나라장터 검색 함수 `g2bApi.callSearchApi` 하나뿐. 테이블·프롬프트·메일 템플릿은 섞지 않는다.
+
+---
+
+## 📌 해외 공고 크롤링 (v4) — 빠른 참조
+
+- 참고자료·계획서·테스트: `docs/해외공고_참고자료/` (기획 엑셀 2종, INBA 조사 PDF, 현황/요약 엑셀, v4 계획 md, 테스트 스크립트+결과 JSON)
+- **흐름**: 활성 소스 수집 → `(source, notice_key)` 신규만 INSERT → **판별** → A·B 만 **요약** → 메일 [A]→[B] 섹션 → `overseas_cron_runs`
+- **판별 (`lib/overseasClassify.js`)**: ① 규칙 A — 제목이 `THAI_RULE_RE`(태국·방콕·태국 도시·THAIFEX·BITEC 등) 매칭이면 GPT 없이 확정 (GPT 장애에도 발송 보장)
+  ② GPT(gpt-4.1-mini, 제목+기관 60건 배치, 제목 캐시) — B(동남아·아세안·ASEAN·메콩 권역, 국가목록에 태국 빠지면 X) / X(국가 미명시 일반 해외사업·타 지역·단어 우연). + `notice_type`(용역/모집/채용/안내) + `topic`.
+  GPT 미판정(키 없음·장애)은 놓치지 않도록 A 와 같이 발송.
+- **요약 (`lib/overseasSummarize.js`)**: g2b 는 검색 행의 마감(`pbancPstgDt` 괄호)·금액(`prspPrce`/`alotBgtAmt`) 그대로. 나머지 소스는 상세 페이지 본문 → GPT `{deadline, amount, topic, summary, contact}`.
+  금액은 첨부(HWP/PDF)에만 있는 경우가 많아 null 흔함 → 첨부 텍스트 추출은 2단계(미구현). `ddayOf()` 로 KST 기준 D-day.
+- **검색 키워드 (`SEARCH_KEYWORDS`)**: `태국 방콕 치앙마이 푸켓 파타야 THAIFEX 동남아 아세안 ASEAN 메콩` — g2b·aT·기업마당·KTO 에서 사용.
+  g2b 검색은 공백·대소문자 무시 부분일치라 영문 짧은 토큰은 오탐(`Thai`→`With AI`) → 제외. `한국관`(172건 중 5)·`바이어`·`수출상담회`·`임팩트`·`K-푸드` 는 1년치 테스트에서 태국 건 기여 0 → 제외.
+- **소스 9개** (`overseas_sources.source_key`):
+  - `g2b` **신규** — `callSearchApi(kw, 100, days_back)` × 키워드 10개. 링크 `https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=…&bidPbancOrd=…`
+  - `suhyup` `koipa` `kotra` — **키워드 없이** 게시판 첫 페이지 전체 → GPT 판별 (v3 은 키워드 검색)
+  - `at` `bizinfo` — 키워드 검색 유지, 키워드 10개로 확장
+  - `kcca` `kec` — 전체 수집 (그대로)
+  - `kto` — 서버 IP 웹방화벽 차단 → OFF (로컬 IP 에선 정상 → IP 허용 요청 필요)
+- **스케줄**: 하루 2회 — `overseas_cron_settings.hour/minute`(오전, 09:55) + `hour2/minute2/enabled2`(오후, 15:00). `index.js` `tickOverseas` 슬롯별 가드, 부팅 시 슬롯 시각 이후 실행 기록으로 재수화.
+- **메일**: 발신명 "해외공고 크롤러"(`sendReport({fromName})`), 제목 `[해외공고] 태국 N건 · 동남아·아세안 M건 — 날짜`. 행마다 D-day 배지(D-7 이내 주황)·기관·제목(형광펜)·유형·금액·주제·요약. 마감 임박순.
+  컷오프 `--mail-since=YYYY-MM-DD` > `OVERSEAS_POSTED_FROM` > `2026-01-01`.
+- **CLI**: `node cron_overseas.js` / `--days=365 --only=g2b --mail-since=…`(백필) / `--no-mail` / `--only=a,b`
+- **DB (v4 추가, `migrate_overseas.mjs` 멱등)**: `overseas_notices.grade, notice_type, topic, amount, ai_reason` (+`deadline`, `summary_md` 활용) · `overseas_cron_settings.hour2, minute2, enabled2`
+- **UI**: 공고 목록 — 등급 필터(A+B 기본)·유형·금액·마감 D-day / 상세 — 등급·판별근거·금액 / 스케줄 — 오전·오후 실행 시각
+- **1년치 테스트(2026-09-16, g2b 609건)**: A 41(재현율 100%) · B 106 · X 462 → 월 A 3.4건 · B 9건. 제목 판별 비용 ≈ $0.02/609건.
+- **다음 단계 후보**: 첨부 텍스트 추출(금액 정확도) · 재조사 엑셀 S등급 미크롤 5곳 파서(KOCCA 태국센터·중진공 GBC·경기 GBC·KOFICE·SBA) · KTO IP 허용
+
+---
+
+## 📌 해외 공고 크롤링 (v3) — 구조 참조 (v4 에서 판별·요약·스케줄이 바뀜, 아래 소스 파서 메모는 유효)
+
+---
 
 - 원본 기획: `공공기관 방콕지사 리스트업.xlsx` 의 '방법' 열 4곳. 게시판 첫 페이지 diff 방식 (days_back 미사용).
 - **테이블**: `overseas_sources` (기관·on/off·last_status) / `overseas_notices` (source+notice_key 유니크) /

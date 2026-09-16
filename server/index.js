@@ -610,14 +610,14 @@ app.patch('/api/admin/overseas/recipients/:id', requireAuth, async (req, res) =>
 app.get('/api/admin/overseas/cron-settings', requireAuth, async (_req, res) => {
   try {
     const s = await getOverseasCronSettings();
-    res.json({ ...s, next_run_at: computeNextRun(s) });
+    res.json({ ...s, next_run_at: computeNextRunOverseas(s) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.patch('/api/admin/overseas/cron-settings', requireAuth, async (req, res) => {
   try {
     await updateOverseasCronSettings(req.body || {});
     const s = await getOverseasCronSettings();
-    res.json({ ok: true, settings: { ...s, next_run_at: computeNextRun(s) } });
+    res.json({ ok: true, settings: { ...s, next_run_at: computeNextRunOverseas(s) } });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 app.post('/api/admin/overseas/cron-settings/run-now', requireAuth, async (_req, res) => {
@@ -1009,6 +1009,15 @@ function computeNextRun(s) {
   return kstNext.toISOString();
 }
 
+// 해외 공고 — 오전(hour/minute)·오후(hour2/minute2) 두 슬롯 중 가장 가까운 다음 실행
+function computeNextRunOverseas(s) {
+  if (!s || !s.enabled) return null;
+  const slots = [{ hour: s.hour, minute: s.minute, enabled: 1 }];
+  if (s.enabled2 && s.hour2 != null) slots.push({ hour: s.hour2, minute: s.minute2, enabled: 1 });
+  const nexts = slots.map(sl => computeNextRun(sl)).filter(Boolean).sort();
+  return nexts[0] || null;
+}
+
 let lastFiredKstDate = null;   // 'YYYY-MM-DD' (KST)
 let cronChildRunning = false;
 
@@ -1034,8 +1043,8 @@ function fireCronChild(daysBack, source = 'schedule') {
   });
 }
 
-// 해외 공고 크롤링 — g2b cron 과 독립된 스케줄/가드
-let lastFiredOverseasKstDate = null;
+// 해외 공고 크롤링 — g2b cron 과 독립된 스케줄/가드. v4: 하루 2회 (슬롯별 가드)
+const lastFiredOverseas = { 1: null, 2: null };   // slot → 'YYYY-MM-DD' (KST)
 let overseasCronChildRunning = false;
 
 function fireOverseasCronChild(daysBack, source = 'schedule') {
@@ -1074,16 +1083,20 @@ async function rehydrateLastFired() {
       lastFiredKstDate = todayKst;
       console.log(`[cron-scheduler] 오늘(${todayKst}) 이미 실행 기록 존재 — 재발화 방지`);
     }
-    // 해외 공고 — 테이블 미생성 상태 (migrate_overseas.mjs 미실행) 도 허용
+    // 해외 공고 — 슬롯별로 "오늘 그 슬롯 시각 이후 실행 기록" 이 있으면 발화 완료로 본다.
+    // 테이블 미생성 상태 (migrate_overseas.mjs 미실행) 도 허용
     try {
-      const [[o]] = await pool.query(
-        `SELECT started_at FROM overseas_cron_runs
-         WHERE started_at >= ? ORDER BY id DESC LIMIT 1`,
-        [`${todayKst} 00:00:00`]
-      );
-      if (o) {
-        lastFiredOverseasKstDate = todayKst;
-        console.log(`[overseas-scheduler] 오늘(${todayKst}) 이미 실행 기록 존재 — 재발화 방지`);
+      const o = await getOverseasCronSettings();
+      const slots = [[1, o.hour, o.minute], [2, o.hour2 ?? 15, o.minute2 ?? 0]];
+      for (const [slot, h, m] of slots) {
+        const since = `${todayKst} ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`;
+        const [[r]] = await pool.query(
+          `SELECT started_at FROM overseas_cron_runs WHERE started_at >= ? ORDER BY id DESC LIMIT 1`, [since]
+        );
+        if (r) {
+          lastFiredOverseas[slot] = todayKst;
+          console.log(`[overseas-scheduler] 오늘(${todayKst}) 슬롯${slot}(${since.slice(11, 16)}) 이후 실행 기록 존재 — 재발화 방지`);
+        }
       }
     } catch { /* overseas 테이블 없으면 무시 */ }
   } catch (e) {
@@ -1111,10 +1124,14 @@ async function tickOverseas() {
     const s = await getOverseasCronSettings();
     if (!s.enabled) return;
     const { dateKey, hour, minute } = getKstParts();
-    if (lastFiredOverseasKstDate === dateKey) return;
-    if (hour === s.hour && minute === s.minute) {
-      lastFiredOverseasKstDate = dateKey;
-      fireOverseasCronChild(s.days_back, 'schedule');
+    const slots = [[1, s.hour, s.minute, true], [2, s.hour2, s.minute2, !!s.enabled2]];
+    for (const [slot, h, m, on] of slots) {
+      if (!on || h == null) continue;
+      if (lastFiredOverseas[slot] === dateKey) continue;
+      if (hour === h && minute === m) {
+        lastFiredOverseas[slot] = dateKey;
+        fireOverseasCronChild(s.days_back, `schedule-slot${slot}`);
+      }
     }
   } catch (e) {
     // migrate_overseas.mjs 실행 전에는 테이블이 없어 실패할 수 있음 — 소음 방지 위해 조용히 스킵
@@ -1134,7 +1151,8 @@ app.listen(PORT, '127.0.0.1', async () => {
   // 해외 스케줄도 같이 남긴다 — 비활성인 걸 모르고 "메일이 왜 안 오지" 로 헤매기 쉬움
   try {
     const o = await getOverseasCronSettings();
-    console.log(`[overseas-scheduler] 활성=${!!o.enabled}, ${String(o.hour).padStart(2,'0')}:${String(o.minute).padStart(2,'0')} KST`);
+    const t2 = o.enabled2 ? ` + ${String(o.hour2).padStart(2,'0')}:${String(o.minute2).padStart(2,'0')}` : '';
+    console.log(`[overseas-scheduler] 활성=${!!o.enabled}, ${String(o.hour).padStart(2,'0')}:${String(o.minute).padStart(2,'0')}${t2} KST`);
     if (!o.enabled) console.log('[overseas-scheduler] ⚠ 비활성 상태 — 스케줄 설정에서 켜야 자동 발송됩니다');
   } catch (e) {
     console.error('[overseas-scheduler] 부팅 시 설정 조회 실패:', e.message);

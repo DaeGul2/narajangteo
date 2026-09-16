@@ -27,7 +27,7 @@ function transporter() {
  * @param {Array<{filename: string, content: Buffer|string}>} [opts.attachments]
  * @param {Array<string|{email: string, name?: string}>} opts.to - 수신자 배열 (필수)
  */
-export async function sendReport({ subject, html, text, attachments, to }) {
+export async function sendReport({ subject, html, text, attachments, to, fromName = 'g2b 채용 크롤러' }) {
   if (!process.env.EMAIL_USER) throw new Error('EMAIL_USER 환경변수 누락');
   if (!to || !to.length) throw new Error('수신자(to) 없음');
 
@@ -52,7 +52,7 @@ export async function sendReport({ subject, html, text, attachments, to }) {
   //   원본 마크다운은 첨부파일(report.md)로 전달.
   try {
     const info = await transporter().sendMail({
-      from: `"g2b 채용 크롤러" <${process.env.EMAIL_USER}>`,
+      from: `"${fromName}" <${process.env.EMAIL_USER}>`,
       to: recipients,
       subject,
       html: htmlFinal,

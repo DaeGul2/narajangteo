@@ -25,7 +25,8 @@ export default function OverseasCronSettings() {
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       const j = await r.json()
       setS(j)
-      setEdit({ hour: j.hour, minute: j.minute, enabled: !!j.enabled, days_back: j.days_back })
+      setEdit({ hour: j.hour, minute: j.minute, enabled: !!j.enabled,
+                hour2: j.hour2 ?? 15, minute2: j.minute2 ?? 0, enabled2: !!(j.enabled2 ?? 1), days_back: j.days_back })
     } catch (e) { setErr(e.message) }
     try {
       const r = await authFetch('/api/admin/overseas/cron-runs?limit=10')
@@ -91,12 +92,13 @@ export default function OverseasCronSettings() {
 
   const dirty = edit.hour !== s.hour || edit.minute !== s.minute
     || !!edit.enabled !== !!s.enabled || Number(edit.days_back) !== Number(s.days_back)
+    || edit.hour2 !== (s.hour2 ?? 15) || edit.minute2 !== (s.minute2 ?? 0) || !!edit.enabled2 !== !!(s.enabled2 ?? 1)
 
   return (
     <div>
       <div className="page-head">
         <h2>해외 공고 크롤링 스케줄</h2>
-        <div className="page-sub">매일 1회 자동 실행 시각 (KST) — 채용공고 크롤링 스케줄과 별개</div>
+        <div className="page-sub">매일 2회 (오전·오후) 자동 실행 시각 (KST) — 채용공고 크롤링 스케줄과 별개</div>
       </div>
 
       {err && <div className="error">{err}</div>}
@@ -117,7 +119,7 @@ export default function OverseasCronSettings() {
           </b>
         </div>
         <div className="kv">
-          <span>실행 시각</span>
+          <span>오전 실행</span>
           <b>
             <select
               value={edit.hour}
@@ -135,7 +137,35 @@ export default function OverseasCronSettings() {
           </b>
         </div>
         <div className="kv">
-          <span>검색 윈도우</span>
+          <span>오후 실행</span>
+          <b>
+            <label style={{ display:'inline-flex', alignItems:'center', gap:6, marginRight:8 }}>
+              <input
+                type="checkbox"
+                checked={!!edit.enabled2}
+                onChange={e => setEdit({ ...edit, enabled2: e.target.checked })}
+              />
+              {edit.enabled2 ? '켬' : '끔'}
+            </label>
+            <select
+              value={edit.hour2}
+              disabled={!edit.enabled2}
+              onChange={e => setEdit({ ...edit, hour2: Number(e.target.value) })}
+            >
+              {HOURS.map(h => <option key={h} value={h}>{String(h).padStart(2,'0')}시</option>)}
+            </select>
+            {' '}
+            <select
+              value={edit.minute2}
+              disabled={!edit.enabled2}
+              onChange={e => setEdit({ ...edit, minute2: Number(e.target.value) })}
+            >
+              {MINUTES.map(m => <option key={m} value={m}>{String(m).padStart(2,'0')}분</option>)}
+            </select>
+          </b>
+        </div>
+        <div className="kv">
+          <span>나라장터 검색 윈도우</span>
           <b>
             최근{' '}
             <input
@@ -244,8 +274,8 @@ export default function OverseasCronSettings() {
       )}
 
       <p className="small muted" style={{ marginTop: 24 }}>
-        * 게시판 첫 페이지를 크롤해서 이전에 못 본 공고만 신규로 저장·발송합니다. 첫 실행 시에는
-        현재 게시판에 있는 글이 전부 신규로 잡히니 참고하세요.
+        * 각 소스에서 이전에 못 본 공고만 신규로 저장한 뒤, 제목에 태국이 명시되면 A(확정), 동남아·아세안 권역이면 GPT 가 B 로 판별하고
+        A·B 만 메일로 보냅니다(마감 D-day·금액·주제 포함). 검색 윈도우는 나라장터(g2b) 검색에만 쓰이고, 나머지 소스는 게시판 첫 페이지를 봅니다.
       </p>
     </div>
   )

@@ -80,32 +80,48 @@ const TABLES = [
   `],
 ];
 
-// 소스 시드 — 엑셀 '공공기관 방콕지사 리스트업.xlsx' 의 '방법' 열이 있는 4곳
+// 소스 시드 — v3 엑셀 '방법' 열 + v4(2026-09-16) g2b 추가. INSERT IGNORE 라 기존 행은 보존 (method_note 는 아래에서 UPDATE).
 const SOURCES_SEED = [
+  ['g2b', '나라장터 (g2b)', 'https://www.g2b.go.kr',
+   'https://www.g2b.go.kr (selectBidPbacScrollTypeList.do)',
+   '공고명 키워드 검색 (태국·방콕·치앙마이·푸켓·파타야·THAIFEX·동남아·아세안·ASEAN·메콩) × 최근 N일 → GPT 판별. 채용대행 크롤러와 별개 저장'],
   ['kcca', '주태국 한국문화원(KCCA)', 'https://thailand.korean-culture.org/ko',
    'https://thailand.korean-culture.org/ko/1056/board/805/list',
-   '새로운 공고 있으면 제목과 해당 디테일 페이지 url, 게시일을 메일로 보내줌'],
+   '게시판 첫 페이지 전체 → GPT 판별 (태국 소재 기관이라 키워드 없음)'],
   ['kec', '태국한국교육원', 'https://kecthai.kr/',
    'https://kecthai.kr/sub/news/1-1.php',
-   '공지사항에 새로운 글 올라오면 제목과 해당 디테일 페이지 url, 게시일을 메일로'],
+   '공지사항 첫 페이지 전체 → GPT 판별 (태국 소재 기관이라 키워드 없음)'],
   ['koipa', '한국지식재산보호원 동남아 서부 IP센터', 'https://www.koipa.re.kr',
    'https://www.koipa.re.kr/home/board/brdList.do?menu_cd=000041, https://www.koipa.re.kr/home/board/brdList.do?menu_cd=000042',
-   "검색어 '태국' or '방콕' 입력했을 때 새로운 공고 있으면 제목, 등록일, 디테일 페이지 url 메일로"],
+   '사업공고·입찰공고 첫 페이지 전체 (키워드 없이) → GPT 판별'],
   ['bizinfo', '기업마당', 'https://www.bizinfo.go.kr',
    'https://www.bizinfo.go.kr/sii/siia/selectSIIA200View.do',
-   "지원사업명에 태국/방콕/bangkok/thailand 검색해서 새로운 거 지원사업명, 게시일, 디테일 페이지 url 메일로"],
+   '지원사업명 키워드 검색 (태국·방콕·치앙마이·푸켓·파타야·THAIFEX·동남아·아세안·ASEAN·메콩) → GPT 판별'],
   ['kto', '한국관광공사 (KTO) 방콕지사', 'https://touraz.kr',
    'https://touraz.kr/publicTenderList, https://touraz.kr/announcementList',
-   "입찰공고(KTO+유관기관 2탭) 및 공고·공모에서 검색조건 '전체'로 태국/방콕/bangkok/thailand 검색"],
+   "입찰공고(KTO+유관기관 2탭) 및 공고·공모 키워드 검색 → GPT 판별. ⚠ 서버 IP 웹방화벽 차단으로 OFF"],
   ['suhyup', '수협중앙회 방콕무역지원센터', 'https://www.suhyup.co.kr',
    'https://www.suhyup.co.kr/bbs/suhyup/23/artclList.do',
-   '입찰공고 게시판 제목 검색 — 방콕, 태국, bangkok, thailand'],
+   '입찰공고 게시판 첫 페이지 전체 (키워드 없이) → GPT 판별'],
   ['at', '한국농수산식품유통공사 (aT) 방콕지사', 'https://www.enjoykfood.com/bidding',
    'https://www.enjoykfood.com/?mid=bidding&search_target=title_content',
-   '입찰공고 제목+내용 검색 — 방콕, 태국, bangkok, thailand'],
+   '입찰공고 제목+내용 키워드 검색 (태국·방콕·치앙마이·푸켓·파타야·THAIFEX·동남아·아세안·ASEAN·메콩) → GPT 판별'],
   ['kotra', '대한무역투자진흥공사 (KOTRA) 방콕무역관', 'https://www.kotra.or.kr/bangkok/index.do',
    'https://www.kotra.or.kr/bangkok/subList/40000000403',
-   '방콕무역관 사업 안내 목록 검색 — bangkok, thailand, 방콕, 태국'],
+   '방콕무역관 사업 안내 목록 전체 (키워드 없이) → GPT 판별'],
+];
+
+// v4 컬럼 추가 (멱등) — overseas_notices 판별/요약 결과, overseas_cron_settings 오후 실행 슬롯
+const ALTERS = [
+  ['overseas_notices', 'grade',       "ALTER TABLE overseas_notices ADD COLUMN grade VARCHAR(2) NULL COMMENT 'A=태국 확정 / B=동남아·아세안 권역 / X=제외' AFTER organization"],
+  ['overseas_notices', 'notice_type', "ALTER TABLE overseas_notices ADD COLUMN notice_type VARCHAR(20) NULL COMMENT '용역/모집/채용/안내' AFTER grade"],
+  ['overseas_notices', 'topic',       "ALTER TABLE overseas_notices ADD COLUMN topic VARCHAR(100) NULL AFTER notice_type"],
+  ['overseas_notices', 'amount',      "ALTER TABLE overseas_notices ADD COLUMN amount VARCHAR(100) NULL AFTER deadline"],
+  ['overseas_notices', 'ai_reason',   "ALTER TABLE overseas_notices ADD COLUMN ai_reason TEXT NULL AFTER amount"],
+  ['overseas_notices', 'idx_grade',   "ALTER TABLE overseas_notices ADD INDEX idx_grade (grade)"],
+  ['overseas_cron_settings', 'hour2',    "ALTER TABLE overseas_cron_settings ADD COLUMN hour2 TINYINT NOT NULL DEFAULT 15 AFTER minute"],
+  ['overseas_cron_settings', 'minute2',  "ALTER TABLE overseas_cron_settings ADD COLUMN minute2 TINYINT NOT NULL DEFAULT 0 AFTER hour2"],
+  ['overseas_cron_settings', 'enabled2', "ALTER TABLE overseas_cron_settings ADD COLUMN enabled2 TINYINT(1) NOT NULL DEFAULT 1 AFTER minute2"],
 ];
 
 async function main() {
@@ -151,6 +167,27 @@ async function main() {
     if (rs.affectedRows > 0) srcSeeded++;
   }
   console.log(`  + overseas_sources 시드 ${srcSeeded}건 (총 ${SOURCES_SEED.length}개 시도)`);
+  // 수집 방식 설명은 항상 최신으로 (enabled 는 건드리지 않음)
+  for (const [key, , , target, note] of SOURCES_SEED) {
+    await conn.execute(`UPDATE overseas_sources SET method_note = ?, target_url = ? WHERE source_key = ?`, [note, target, key]);
+  }
+
+  // v4 컬럼/인덱스
+  let altered = 0;
+  for (const [table, col, ddl] of ALTERS) {
+    const isIndex = col.startsWith('idx_');
+    const [[has]] = await conn.query(
+      isIndex
+        ? `SELECT 1 AS ok FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?`
+        : `SELECT 1 AS ok FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`,
+      [table, col]
+    );
+    if (has && has.ok) continue;
+    await conn.query(ddl);
+    console.log(`  + ${table}.${col} 추가`);
+    altered++;
+  }
+  if (!altered) console.log('  - v4 컬럼: 이미 있음 (skip)');
 
   console.log(`\n✅ 완료 — 생성 ${created}, 스킵 ${skipped}`);
   await conn.end();

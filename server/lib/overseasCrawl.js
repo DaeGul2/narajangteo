@@ -4,6 +4,8 @@
 
 import https from 'node:https';
 import { createHash } from 'node:crypto';
+import { callSearchApi } from './g2bApi.js';
+import { clean, normalizeBidNo, money } from './utils.js';
 
 // 사이트가 안정적인 id 를 주지 않을 때 쓰는 내용 기반 키
 function contentKey(...parts) {
@@ -11,7 +13,13 @@ function contentKey(...parts) {
 }
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
-export const KEYWORDS = ['태국', '방콕', 'bangkok', 'thailand'];
+
+// v4 (2026-09-16) — 검색 키워드. 키워드 검색이 필요한 소스(g2b·aT·기업마당·KTO)에서 이 목록으로 각각 검색.
+// 수협·지식재산보호원·KOTRA 는 게시판 전체를 가져와 GPT 로 판별하므로 키워드를 쓰지 않는다.
+// 1년치 g2b 테스트 근거: 한국관(172건 중 5)·바이어(53 중 0)·수출상담회(50 중 1)·임팩트·K-푸드·영문(Thailand/Bangkok 0건)은 제외.
+export const SEARCH_KEYWORDS = ['태국', '방콕', '치앙마이', '푸켓', '파타야', 'THAIFEX', '동남아', '아세안', 'ASEAN', '메콩'];
+// 메일 제목 형광펜용 (검색 키워드 + 영문 표기)
+export const KEYWORDS = [...SEARCH_KEYWORDS, 'bangkok', 'thailand', 'thai', 'chiang mai', 'phuket', 'pattaya', '동남아시아'];
 
 async function fetchText(url, { cookie = null, timeoutMs = 30000 } = {}) {
   const headers = { 'User-Agent': UA, 'Accept-Language': 'ko,en;q=0.8' };
@@ -83,7 +91,7 @@ function normDate(raw) {
 async function collectByKeyword(fn) {
   const out = [];
   const seen = new Set();
-  for (const kw of KEYWORDS) {
+  for (const kw of SEARCH_KEYWORDS) {
     const items = await fn(kw);
     for (const it of items) {
       if (seen.has(it.noticeKey)) continue;
@@ -148,15 +156,15 @@ async function crawlKec() {
   return items;
 }
 
-// ── 한국지식재산보호원 (KOIPA) — 게시판 2개 × 키워드 검색 ──
+// ── 한국지식재산보호원 (KOIPA) — 사업공고(000041)·입찰공고(000042) 첫 페이지 전체 (v4: 키워드 없이 → GPT 판별) ──
 async function crawlKoipa() {
   const items = [];
   const seen = new Set();
   for (const menuCd of ['000041', '000042']) {
-    const got = await collectByKeyword(async (kw) => {
-      const url = `https://www.koipa.re.kr/home/board/brdList.do?menu_cd=${menuCd}&searchText=${encodeURIComponent(kw)}&searchData=contdata`;
+    const got = await (async () => {
+      const url = `https://www.koipa.re.kr/home/board/brdList.do?menu_cd=${menuCd}`;
       const res = await fetchText(url);
-      if (!res.ok) throw new Error(`KOIPA(${menuCd}, ${kw}) HTTP ${res.status}`);
+      if (!res.ok) throw new Error(`KOIPA(${menuCd}) HTTP ${res.status}`);
       const html = await res.text();
       assertNotBlocked(html, 'KOIPA');
       const out = [];
@@ -174,7 +182,7 @@ async function crawlKoipa() {
         });
       }
       return out;
-    });
+    })();
     for (const it of got) {
       if (seen.has(it.noticeKey)) continue;
       seen.add(it.noticeKey);
@@ -286,12 +294,12 @@ async function crawlKto() {
   return items;
 }
 
-// ── 수협중앙회 방콕무역지원센터 — 입찰공고 게시판 제목 검색 ──
+// ── 수협중앙회 방콕무역지원센터 — 입찰공고 게시판 첫 페이지 전체 (v4: 키워드 없이 → GPT 판별) ──
 async function crawlSuhyup() {
-  return collectByKeyword(async (kw) => {
-    const url = `https://www.suhyup.co.kr/bbs/suhyup/23/artclList.do?srchColumn=sj&srchWrd=${encodeURIComponent(kw)}`;
+  {
+    const url = `https://www.suhyup.co.kr/bbs/suhyup/23/artclList.do`;
     const res = await fetchText(url);
-    if (!res.ok) throw new Error(`수협(${kw}) HTTP ${res.status}`);
+    if (!res.ok) throw new Error(`수협 HTTP ${res.status}`);
     const html = await res.text();
     assertNotBlocked(html, '수협');
     const out = [];
@@ -309,7 +317,7 @@ async function crawlSuhyup() {
       });
     }
     return out;
-  });
+  }
 }
 
 // ── 한국농수산식품유통공사 (aT) 방콕지사 — enjoykfood 입찰공고 (제목+내용 검색) ──
@@ -339,9 +347,10 @@ async function crawlAt() {
   });
 }
 
-// ── KOTRA 방콕무역관 — 사업 안내 (ajax 목록) ──
+// ── KOTRA 방콕무역관 — 사업 안내 (ajax 목록) 전체 (v4: 키워드 없이 → GPT 판별) ──
 async function crawlKotra() {
-  return collectByKeyword(async (kw) => {
+  const kw = '';
+  {
     const res = await fetch('https://www.kotra.or.kr/bangkok/module/subhome/bizAply/selectBmBizKbcListAjax.do', {
       method: 'POST',
       headers: {
@@ -377,10 +386,56 @@ async function crawlKotra() {
       });
     }
     return out;
-  });
+  }
+}
+
+// ── 나라장터 (g2b) — 공고명 키워드 검색 (v4 신규) ──
+// 채용대행(인사바른) 크롤러와는 검색 함수(callSearchApi)만 공유. 저장·판별·메일은 해외공고 전용.
+// g2b 검색 특성: 공백·대소문자 무시 부분일치 → 영문 짧은 토큰은 오탐('Thai' → 'With AI') 이라 SEARCH_KEYWORDS 에 없음.
+// 검색 행에 게시일·입찰마감·금액이 이미 있어 첨부 없이 D-day·금액을 채운다.
+function parseG2bDates(raw) {
+  // "2026/09/08 09:12<br/>(2026/09/22 10:00)" / "2026/08/28 18:34<br/>(-)" 형태 (엔티티 인코딩 가능)
+  const s = String(raw || '').replace(/&lt;br\/?&gt;|<br\s*\/?>/gi, ' ').replace(/&#40;/g, '(').replace(/&#41;/g, ')');
+  const all = [...s.matchAll(/(\d{4})\/(\d{2})\/(\d{2})(?:\s+(\d{2}:\d{2}))?/g)]
+    .map(m => ({ date: `${m[1]}-${m[2]}-${m[3]}`, time: m[4] || null }));
+  const posted = all[0] ? all[0].date : null;
+  const dl = all[1] ? `${all[1].date}${all[1].time ? ' ' + all[1].time : ''}` : null;
+  return { posted, deadline: dl };
+}
+async function crawlG2b({ daysBack = 5 } = {}) {
+  const out = [];
+  const seen = new Set();
+  for (const kw of SEARCH_KEYWORDS) {
+    const rows = await callSearchApi(kw, 100, daysBack);
+    for (const r of rows) {
+      if (!r || typeof r !== 'object') continue;
+      const name = clean(r.bidPbancNm);
+      const bidNo = normalizeBidNo(r.bidPbancUntyNoOrd || r.bidPbancNo || r.untyBidPbancNo);
+      if (!name || !bidNo || seen.has(bidNo)) continue;
+      seen.add(bidNo);
+      const { posted, deadline } = parseG2bDates(r.pbancPstgDt);
+      const amt = money(r.prspPrce) || money(r.alotBgtAmt) || '';
+      const pbancNo = String(r.bidPbancUntyNo || bidNo.split('-')[0]);
+      const pbancOrd = String(r.bidPbancUntyOrd || bidNo.split('-')[1] || '000');
+      out.push({
+        noticeKey: bidNo,
+        title: name,
+        url: `https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=${encodeURIComponent(pbancNo)}&bidPbancOrd=${encodeURIComponent(pbancOrd)}`,
+        postedAt: posted,
+        // g2b 전용 부가 정보 — 요약 단계에서 상세 페이지 대신 그대로 사용
+        agency: clean(r.oderInstUntyGrpNm || r.dmstNm),
+        deadline,
+        amount: amt ? `${amt} (${r.prspPrce ? '추정가격' : '배정예산'})` : null,
+        status: clean(r.pbancSttsNm),
+        matchedKeyword: kw,
+      });
+    }
+  }
+  return out;
 }
 
 const CRAWLERS = {
+  g2b: crawlG2b,
   kcca: crawlKcca,
   kec: crawlKec,
   koipa: crawlKoipa,
@@ -391,10 +446,10 @@ const CRAWLERS = {
   kotra: crawlKotra,
 };
 
-export async function crawlSource(sourceKey) {
+export async function crawlSource(sourceKey, opts = {}) {
   const fn = CRAWLERS[sourceKey];
   if (!fn) throw new Error(`알 수 없는 source_key: ${sourceKey}`);
-  return fn();
+  return fn(opts);
 }
 
 export const KNOWN_SOURCE_KEYS = Object.keys(CRAWLERS);

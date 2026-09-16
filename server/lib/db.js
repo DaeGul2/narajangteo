@@ -859,7 +859,7 @@ export async function removeEmployeeProject(id) {
 export async function listOverseasNotices(limit = 200) {
   const [rows] = await pool.query(
     `SELECT id, source, notice_key, title, organization, country, url,
-            posted_at, deadline,
+            grade, notice_type, topic, posted_at, deadline, amount,
             CHAR_LENGTH(summary_md) > 0 AS has_summary,
             email_sent_at, created_at
      FROM overseas_notices
@@ -907,34 +907,33 @@ export async function updateOverseasRecipient(id, { email, name, active }) {
 
 export async function getOverseasCronSettings() {
   const [rows] = await pool.query(
-    `SELECT id, hour, minute, enabled, days_back, updated_at FROM overseas_cron_settings WHERE id = 1`
+    `SELECT id, hour, minute, enabled, hour2, minute2, enabled2, days_back, updated_at FROM overseas_cron_settings WHERE id = 1`
   );
   if (rows[0]) return rows[0];
   await pool.execute(
     `INSERT IGNORE INTO overseas_cron_settings (id, hour, minute, enabled, days_back) VALUES (1, 11, 30, 0, 5)`
   );
   const [r2] = await pool.query(
-    `SELECT id, hour, minute, enabled, days_back, updated_at FROM overseas_cron_settings WHERE id = 1`
+    `SELECT id, hour, minute, enabled, hour2, minute2, enabled2, days_back, updated_at FROM overseas_cron_settings WHERE id = 1`
   );
   return r2[0];
 }
 
-export async function updateOverseasCronSettings({ hour, minute, enabled, days_back }) {
+// v4: 하루 2회 (오전 슬롯 hour/minute + 오후 슬롯 hour2/minute2, enabled2 로 오후만 끌 수 있음)
+export async function updateOverseasCronSettings({ hour, minute, enabled, hour2, minute2, enabled2, days_back }) {
   const sets = [];
   const params = [];
-  if (hour !== undefined) {
-    const h = Number(hour);
-    if (!Number.isInteger(h) || h < 0 || h > 23) throw new Error('hour 는 0~23');
-    sets.push('hour = ?'); params.push(h);
-  }
-  if (minute !== undefined) {
-    const m = Number(minute);
-    if (!Number.isInteger(m) || m < 0 || m > 59) throw new Error('minute 는 0~59');
-    sets.push('minute = ?'); params.push(m);
-  }
-  if (enabled !== undefined) {
-    sets.push('enabled = ?'); params.push(enabled ? 1 : 0);
-  }
+  const chk = (label, v, max) => {
+    const n = Number(v);
+    if (!Number.isInteger(n) || n < 0 || n > max) throw new Error(`${label} 는 0~${max}`);
+    return n;
+  };
+  if (hour !== undefined)    { sets.push('hour = ?');    params.push(chk('hour', hour, 23)); }
+  if (minute !== undefined)  { sets.push('minute = ?');  params.push(chk('minute', minute, 59)); }
+  if (hour2 !== undefined)   { sets.push('hour2 = ?');   params.push(chk('hour2', hour2, 23)); }
+  if (minute2 !== undefined) { sets.push('minute2 = ?'); params.push(chk('minute2', minute2, 59)); }
+  if (enabled !== undefined)  { sets.push('enabled = ?');  params.push(enabled ? 1 : 0); }
+  if (enabled2 !== undefined) { sets.push('enabled2 = ?'); params.push(enabled2 ? 1 : 0); }
   if (days_back !== undefined) {
     const d = Number(days_back);
     if (!Number.isInteger(d) || d < 1 || d > 90) throw new Error('days_back 는 1~90');
@@ -969,13 +968,28 @@ export async function touchOverseasSourceCrawl(id, { status, error = null }) {
 }
 
 // 신규만 INSERT (source + notice_key 유니크) — 삽입된 행의 여부 반환
-export async function insertOverseasNotice({ source, noticeKey, title, organization, url, postedAt }) {
+export async function insertOverseasNotice({ source, noticeKey, title, organization, url, postedAt, deadline = null, amount = null }) {
   const [r] = await pool.execute(
-    `INSERT IGNORE INTO overseas_notices (source, notice_key, title, organization, url, posted_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [source, noticeKey, title, organization || null, url || null, postedAt || null]
+    `INSERT IGNORE INTO overseas_notices (source, notice_key, title, organization, url, posted_at, deadline, amount)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [source, noticeKey, title, organization || null, url || null, postedAt || null, deadline || null, amount || null]
   );
   return r.affectedRows > 0;
+}
+
+// v4: 판별·요약 결과 저장 (있는 필드만 갱신)
+export async function updateOverseasNoticeAnalysis(source, noticeKey, { grade, noticeType, topic, deadline, amount, aiReason, summaryMd }) {
+  const sets = [], params = [];
+  if (grade !== undefined)      { sets.push('grade = ?');       params.push(grade); }
+  if (noticeType !== undefined) { sets.push('notice_type = ?'); params.push(noticeType || null); }
+  if (topic !== undefined)      { sets.push('topic = ?');       params.push(topic || null); }
+  if (deadline !== undefined)   { sets.push('deadline = ?');    params.push(deadline || null); }
+  if (amount !== undefined)     { sets.push('amount = ?');      params.push(amount || null); }
+  if (aiReason !== undefined)   { sets.push('ai_reason = ?');   params.push(aiReason || null); }
+  if (summaryMd !== undefined)  { sets.push('summary_md = ?');  params.push(summaryMd || null); }
+  if (!sets.length) return;
+  params.push(source, noticeKey);
+  await pool.execute(`UPDATE overseas_notices SET ${sets.join(', ')} WHERE source = ? AND notice_key = ?`, params);
 }
 
 export async function markOverseasNoticesEmailed(source, noticeKeys) {
