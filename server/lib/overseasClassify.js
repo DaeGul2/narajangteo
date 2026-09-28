@@ -31,19 +31,25 @@ function saveCache() {
   catch (e) { console.error('[overseasClassify] cache save failed:', e.message); }
 }
 
-const SYSTEM = `당신은 한국 공공기관 공고 제목을 보고 "태국(Thailand)과 관련된 공고인지" 판정합니다.
-사업 장소·대상 국가·참가자·바이어·계약 상대 중 하나라도 태국이면 관련. 한국에서 하든 태국에서 하든 무관.
-⚠ 판정 근거는 **제목** 입니다. 함께 주는 기관명(org)은 힌트일 뿐이며, 기관명에 "방콕지사·태국사무소·동남아 IP센터" 같은 말이 있어도
-제목에 태국·권역 근거가 없으면 X 입니다 (본사 공용 게시판에 올라온 국내 사업이 대부분이기 때문).
+// v4.2 (2026-09-28) — 러프하게: 놓침 방지 우선. 지역 미명시 해외사업·타 동남아국가·다국가 사업도 B 로 올린다.
+// 프롬프트가 바뀌면 PROMPT_VER 를 올려 캐시를 무효화 (캐시 키 = `${PROMPT_VER}|${title}`)
+const PROMPT_VER = 'v4.2';
+const SYSTEM = `당신은 한국 공공기관 공고 제목을 보고 "태국(Thailand) 법인이 영업 기회로 볼 만한 공고인지" 판정합니다.
+사업 장소·대상 국가·참가자·바이어·계약 상대 중 하나라도 태국이거나 태국일 수 있으면 관련. 한국에서 하든 해외에서 하든 무관.
+⚠ **놓치는 것이 잘못 보내는 것보다 훨씬 나쁩니다. 애매하면 B.**
+판정 근거는 제목이 우선이고, 기관명(org)은 힌트입니다.
 
 [등급]
 - "A": 제목에 태국 또는 태국 도시·태국 개최 행사명이 명시됨
-- "B": 태국이 직접 명시되진 않았지만 태국이 포함될 가능성이 높은 권역 사업 — 동남아, 동남아시아, 아세안, ASEAN, 메콩, 인도차이나, 아세안+3 등.
-       단 국가 목록이 명시되어 있고 태국이 빠져 있으면 "X".
-- "X": 그 외 전부. 특히 다음은 반드시 X:
-  · 국가·권역이 전혀 명시되지 않은 일반 해외사업 (해외전시, 수출상담회, 무역사절단, 바이어 초청, 해외마케팅 — 어디인지 모르면 X)
-  · 태국·동남아 외 지역만 명시 (인도, 일본, 중국, 미국, 유럽, 중동, 아프리카, 중앙아시아, 오세아니아 등)
-  · 단어 우연 일치 (동남아파트, 동남아트센터, 임팩트 소켓, 바이텍 시약, With AI 등), 국내 전용 사업
+- "B": 태국이 명시되진 않았지만 태국이 포함되거나 태국 법인이 참여할 여지가 있는 것 — 넓게 잡습니다:
+  · 동남아·아세안·ASEAN·메콩·인도차이나·아시아 등 권역 사업
+  · 태국 외 동남아 국가(베트남·인도네시아·말레이시아·필리핀·싱가포르·미얀마·캄보디아·라오스) 사업
+  · 여러 나라·권역을 대상으로 하는 사업, 해외 지사·거점·파트너·현지 법인을 모집하는 사업
+  · 국가·권역이 명시되지 않은 해외사업 (해외전시, 해외 박람회, 수출상담회, 무역사절단, 바이어 초청, 해외마케팅, 해외 홍보, 글로벌 진출 지원, 국제교류, K-푸드·K-콘텐츠 해외 확산 등)
+- "X": 명백히 무관한 것만:
+  · 해외 요소가 전혀 없는 국내 전용 사업 (국내 시설 공사·유지보수, 국내 행사, 국내 교육·채용, 물품 구매 등)
+  · 태국·동남아와 무관한 지역만 명시 (일본, 중국, 미국, 유럽, 중동, 아프리카, 중남미, 오세아니아, 중앙아시아 단독 등)
+  · 단어 우연 일치 (동남아파트, 동남아트센터, 임팩트 소켓, 바이텍 시약, With AI 등)
 
 [type]
 - "용역": 입찰·제안·대행·위탁·공사·구매 등 업체가 응찰하는 것 (운영대행, 부스 장치, 상담회 운영, 연수 프로그램, 조사 용역 등)
@@ -78,7 +84,7 @@ export async function classifyOverseas(items, { force = false } = {}) {
         : it.branchThai ? '태국 소재 기관(지사) 자체 게시판 — 주체가 태국'
         : (it.forceAReason || '소스 제도 규칙'));
     }
-    const cached = force ? null : _cache[title];
+    const cached = force ? null : _cache[`${PROMPT_VER}|${title}`];
     if (cached) {
       // 캐시된 GPT 결과에 규칙 A 를 덮어쓴다 (규칙이 항상 우선)
       out.set(it.id, { ...cached, grade: isA ? 'A' : cached.grade, reason: isA ? `${ruleReason.get(it.id)} · ${cached.reason}` : cached.reason, by: 'cache' });
@@ -115,7 +121,7 @@ export async function classifyOverseas(items, { force = false } = {}) {
             topic: String(r.topic || '').slice(0, 100),
             reason: String(r.reason || '').slice(0, 500),
           };
-          _cache[item.title] = v;
+          _cache[`${PROMPT_VER}|${item.title}`] = v;
           const a = ruleA.has(item.id);
           out.set(item.id, { ...v, grade: a ? 'A' : v.grade, reason: a ? `${ruleReason.get(item.id)} · ${v.reason}` : v.reason, by: a ? 'rule+gpt' : 'gpt' });
         }

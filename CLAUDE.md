@@ -22,7 +22,10 @@
 - 참고자료·계획서·테스트: `docs/해외공고_참고자료/` (기획 엑셀 2종, INBA 조사 PDF, 현황/요약 엑셀, v4 계획 md, 테스트 스크립트+결과 JSON)
 - **흐름**: 활성 소스 수집 → `(source, notice_key)` 신규만 INSERT → **판별** → A·B 만 **요약** → 메일 [A]→[B] 섹션 → `overseas_cron_runs`
 - **판별 (`lib/overseasClassify.js`)**: ① 규칙 A — 제목이 `THAI_RULE_RE`(태국·방콕·태국 도시·THAIFEX·BITEC 등) 매칭이면 GPT 없이 확정 (GPT 장애에도 발송 보장)
-  ② GPT(gpt-4.1-mini, 제목+기관 60건 배치, 제목 캐시) — B(동남아·아세안·ASEAN·메콩 권역, 국가목록에 태국 빠지면 X) / X(국가 미명시 일반 해외사업·타 지역·단어 우연). + `notice_type`(용역/모집/채용/안내) + `topic`.
+  ② GPT(gpt-4.1-mini, 제목+기관 60건 배치, 캐시 키 `PROMPT_VER|제목`) — **v4.2 (2026-09-28) 러프 기준: 놓침 방지 우선, 애매하면 B.**
+  B = 동남아·아세안·아시아 권역 / 타 동남아국가 / 다국가·해외거점 모집 / **국가 미명시 일반 해외사업**(해외전시·수출상담회·바이어 초청·국제교류 등).
+  X = 국내 전용 · 태국·동남아 무관 지역만(일본·중국·미국·유럽 등) · 단어 우연(동남아파트). + `notice_type`(용역/모집/채용/안내) + `topic`.
+  (v4.2 전환 시 최근 2주 X 120건 재판별 → A 3 · B 35 · X 82)
   GPT 미판정(키 없음·장애)은 놓치지 않도록 A 와 같이 발송.
 - **요약 (`lib/overseasSummarize.js`)**: g2b 는 검색 행의 마감(`pbancPstgDt` 괄호)·금액(`prspPrce`/`alotBgtAmt`) 그대로. 나머지 소스는 상세 페이지 본문 → GPT `{deadline, amount, topic, summary, contact}`.
   금액은 첨부(HWP/PDF)에만 있는 경우가 많아 null 흔함 → 첨부 텍스트 추출은 2단계(미구현). `ddayOf()` 로 KST 기준 D-day.
@@ -31,7 +34,9 @@
 - **소스 13개** (`overseas_sources.source_key`):
   - `g2b` **신규** — `callSearchApi(kw, 100, days_back)` × 키워드 10개. 링크 `https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=…&bidPbancOrd=…`
   - `suhyup` `koipa` `kotra` — **키워드 없이** 게시판 첫 페이지 전체 → GPT 판별 (v3 은 키워드 검색)
-  - `at` `bizinfo` — 키워드 검색 유지, 키워드 10개로 확장
+  - `at` — **v4.2 특이케이스**: 방콕지사 자체 사이트 → 입찰공고 첫 페이지 전체 수집 + **제목 무관 신규 전건 A 발송** (`SOURCE_HINT.at.forceAll`, 인도 등 관할 타국 공고 포함).
+    계기: 2026-09-23 「K-스트리트푸드 팝업」(본문에만 '방콕에서') 을 제목 판별로 X 처리해 놓침. 목록 링크는 `/bidding/{srl}`.
+  - `bizinfo` — 키워드 검색 유지, 키워드 10개
   - `kcca` `kec` — 전체 수집 (그대로). `kcca` `kec` `kotra` 는 **태국 소재 기관 게시판 → 규칙 A** (`SOURCE_HINT.branchThai`)
   - `kofice` `kocca` `gbsa` **v4.1 신규** (재조사 엑셀 S등급) — 입찰공고/지원공고+사업공고/입찰정보 첫 페이지 전체 → GPT 판별.
     KOFICE 상세는 GET `view.do?…&bbsSn=`, KOCCA 지원공고는 접수기간 끝을 deadline 으로, 날짜 `26.09.15` 형식은 `normDate` 가 20yy 로.

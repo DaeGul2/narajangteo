@@ -39,7 +39,10 @@ const SOURCE_HINT = {
   kotra:   { branchThai: true,  orgHint: 'KOTRA 방콕무역관 담당 사업 목록' },
   suhyup:  { branchThai: false, orgHint: '수협중앙회 (본사 공용 입찰공고 게시판)' },
   koipa:   { branchThai: false, orgHint: '한국지식재산보호원 (본사 공용 공고 게시판)' },
-  at:      { branchThai: false, orgHint: 'aT 아세안지역본부 방콕지사 (인도 등 타국 공고도 올라옴)' },
+  // aT enjoykfood 는 방콕지사 자체 사이트 — 특이케이스: 제목 무관 신규 전부 A 로 발송 (인도 등 관할 타국 공고 포함, 사용자 결정 2026-09-28).
+  // 계기: 2026-09-23 "K-스트리트푸드 팝업"(본문에만 '방콕에서') 을 제목 판별로 X 처리해 놓침
+  at:      { branchThai: false, orgHint: 'aT 아세안지역본부 방콕지사',
+             forceAll: true, ruleReason: 'aT 방콕지사 사이트 — 신규 전건 발송 (특이케이스)' },
   bizinfo: { branchThai: false, orgHint: '기업마당 (전국 지원사업 포털)' },
   kofice:  { branchThai: false, orgHint: '한국국제문화교류진흥원 KOFICE (본사 입찰공고 게시판)' },
   kocca:   { branchThai: false, orgHint: '한국콘텐츠진흥원 KOCCA (본사 지원공고·사업공고 게시판)' },
@@ -52,7 +55,7 @@ const SOURCE_HINT = {
 };
 export function classifyInput(it) {
   const h = SOURCE_HINT[it.source] || {};
-  const forceA = !!(h.ruleRe && h.ruleRe.test(it.title || ''));
+  const forceA = !!h.forceAll || !!(h.ruleRe && h.ruleRe.test(it.title || ''));
   return {
     title: it.title,
     org: h.orgHint === null || h.orgHint === undefined ? (it.organization || '') : h.orgHint,

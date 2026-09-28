@@ -248,31 +248,32 @@ async function crawlSuhyup() {
   }
 }
 
-// ── 한국농수산식품유통공사 (aT) 방콕지사 — enjoykfood 입찰공고 (제목+내용 검색) ──
+// ── 한국농수산식품유통공사 (aT) 방콕지사 — enjoykfood 입찰공고 첫 페이지 전체 (방콕지사 자체 사이트 → 판별은 SOURCE_HINT.at) ──
 // https 는 자가서명 인증서라 실패 → http 로 접근 (공개 게시판 읽기 전용)
+// 검색어 없는 목록은 링크가 /bidding/{srl} 형태 (검색 결과는 ?document_srl=) — 둘 다 받는다
 async function crawlAt() {
-  return collectByKeyword(async (kw) => {
-    const url = `http://www.enjoykfood.com/?mid=bidding&search_target=title_content&search_keyword=${encodeURIComponent(kw)}`;
-    const res = await fetchText(url);
-    if (!res.ok) throw new Error(`aT(${kw}) HTTP ${res.status}`);
-    const html = await res.text();
-    assertNotBlocked(html, 'aT');
-    const out = [];
-    const re = /<td class="title">\s*<a href="([^"]*document_srl=(\d+))"[^>]*>([\s\S]*?)<\/a>([\s\S]*?)<\/tr>/g;
-    let m;
-    while ((m = re.exec(html)) !== null) {
-      const [, href, srl, titleRaw, rest] = m;
-      const title = stripTags(titleRaw);
-      if (!title) continue;
-      out.push({
-        noticeKey: srl,
-        title,
-        url: `http://www.enjoykfood.com/index.php?mid=bidding&document_srl=${srl}`,
-        postedAt: normDate(rest.match(/<td class="time">([^<]*)<\/td>/)?.[1]),
-      });
-    }
-    return out;
-  });
+  const res = await fetchText('http://www.enjoykfood.com/?mid=bidding');
+  if (!res.ok) throw new Error(`aT HTTP ${res.status}`);
+  const html = await res.text();
+  assertNotBlocked(html, 'aT');
+  const out = [];
+  const seen = new Set();
+  const re = /<a href="[^"]*(?:\/bidding\/|document_srl=)(\d+)"[^>]*>([\s\S]*?)<\/a>([\s\S]*?)<\/tr>/g;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const [, srl, titleRaw, rest] = m;
+    const title = stripTags(titleRaw);
+    if (!title || seen.has(srl)) continue;
+    seen.add(srl);
+    out.push({
+      noticeKey: srl,
+      title,
+      url: `http://www.enjoykfood.com/index.php?mid=bidding&document_srl=${srl}`,
+      postedAt: normDate(rest.match(/<td class="time">([^<]*)<\/td>/)?.[1]),
+    });
+  }
+  if (!out.length) throw new Error('aT 목록 파싱 0건 (마크업 변경 추정)');
+  return out;
 }
 
 // ── KOTRA 방콕무역관 — 사업 안내 (ajax 목록) 전체 (v4: 키워드 없이 → GPT 판별) ──
