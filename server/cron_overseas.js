@@ -64,7 +64,7 @@ export function classifyInput(it) {
   };
 }
 import { classifyOverseas } from './lib/overseasClassify.js';
-import { summarizeOverseasNotice, ddayOf } from './lib/overseasSummarize.js';
+import { summarizeOverseasNotice, judgeAndSummarize, ddayOf } from './lib/overseasSummarize.js';
 import { sendReport } from './lib/email.js';
 
 function arg(name, def) {
@@ -92,6 +92,10 @@ function highlight(escaped) {
     new RegExp(`(${pattern})`, 'gi'),
     '<span style="background:#fff2a8;font-weight:bold;">$1</span>'
   );
+}
+
+function summaryMdOf(s) {
+  return s.summary ? `${s.summary}${s.contact ? `\n\n담당: ${s.contact}` : ''}${s.deadlineKind ? `\n\n마감 종류: ${s.deadlineKind}` : ''}` : undefined;
 }
 
 function ddayBadge(deadline) {
@@ -217,8 +221,39 @@ async function main() {
         await updateOverseasNoticeAnalysis(fresh[i].source, fresh[i].noticeKey, {
           grade: r.grade, noticeType: r.type, topic: r.topic, aiReason: r.reason,
         });
-        (graded[r.grade || 'none']).push(fresh[i]);
       }
+
+      // 2-b) 본문 판별 (v4.3) — 제목만으로 X 인 공고는 상세 본문까지 GPT 로 재판별 + 요약 (GPT 1회).
+      //   올리기만 한다 (A·B 가 본문 때문에 X 로 내려가진 않음). g2b 는 본문이 첨부에만 있어 제외.
+      //   본문을 못 읽으면(첨부 전용·fetch 실패) 제목 판별 X 유지.
+      let upBody = 0;
+      for (const it of fresh.filter(f => f.grade === 'X' && f.source !== 'g2b')) {
+        // 기관명은 제목 판별과 같은 힌트(본사명) — 지사명("동남아 서부 IP센터")을 주면 국내 공고까지 B 로 오판
+        const j = await judgeAndSummarize({ title: it.title, url: it.url, organization: classifyInput(it).org });
+        if (j.error || !j.grade) {
+          console.log(`[overseas-cron]   본문 판별 스킵 ${it.source}/${it.noticeKey}: ${j.error || '등급 없음'}`);
+          continue;
+        }
+        if (j.grade === 'X') {
+          it.aiReason = `${it.aiReason || ''} · 본문도 X: ${j.reason || ''}`.slice(0, 500);
+          await updateOverseasNoticeAnalysis(it.source, it.noticeKey, { aiReason: it.aiReason });
+          continue;
+        }
+        upBody++;
+        it.grade = j.grade;
+        it.aiReason = `본문 판별 ${j.grade}: ${j.reason || ''}`.slice(0, 500);
+        it.deadline = j.deadline || it.deadline || null;
+        it.amount = j.amount || it.amount || null;
+        it.topic = j.topic || it.topic || null;
+        it.summary = j.summary || null;   // 이미 본문을 읽었으므로 3) 요약 단계 스킵
+        await updateOverseasNoticeAnalysis(it.source, it.noticeKey, {
+          grade: it.grade, aiReason: it.aiReason,
+          deadline: it.deadline, amount: it.amount, topic: it.topic, summaryMd: summaryMdOf(j),
+        });
+        console.log(`[overseas-cron]   본문 판별 X→${j.grade} ${it.source}/${it.noticeKey} ${it.title.slice(0, 40)}`);
+      }
+      for (const it of fresh) (graded[it.grade || 'none']).push(it);
+      if (upBody) console.log(`[overseas-cron] 본문 판별로 ${upBody}건 X→A/B`);
       console.log(`[overseas-cron] 판별 — A ${graded.A.length} · B ${graded.B.length} · X ${graded.X.length} · 미판정 ${graded.none.length}`);
     }
 
@@ -266,7 +301,7 @@ async function main() {
         it.summary = s.summary || null;
         await updateOverseasNoticeAnalysis(it.source, it.noticeKey, {
           deadline: it.deadline, amount: it.amount, topic: it.topic,
-          summaryMd: s.summary ? `${s.summary}${s.contact ? `\n\n담당: ${s.contact}` : ''}${s.deadlineKind ? `\n\n마감 종류: ${s.deadlineKind}` : ''}` : undefined,
+          summaryMd: summaryMdOf(s),
         });
       } catch (e) {
         console.log(`[overseas-cron]   요약 실패 ${it.source}/${it.noticeKey}: ${e.message}`);

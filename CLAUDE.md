@@ -26,6 +26,11 @@
   B = 동남아·아세안·아시아 권역 / 타 동남아국가 / 다국가·해외거점 모집 / **국가 미명시 일반 해외사업**(해외전시·수출상담회·바이어 초청·국제교류 등).
   X = 국내 전용 · 태국·동남아 무관 지역만(일본·중국·미국·유럽 등) · 단어 우연(동남아파트). + `notice_type`(용역/모집/채용/안내) + `topic`.
   (v4.2 전환 시 최근 2주 X 120건 재판별 → A 3 · B 35 · X 82)
+  ③ **본문 판별 (v4.3, 2026-09-28)** — 제목 판별 X 인 **g2b 외** 신규는 상세 본문까지 GPT 로 재판별 + 요약 1회 (`judgeAndSummarize`, 기준 `GRADE_BX_RULES` 공유).
+  올리기만 함(X→A/B). 본문 못 읽으면(첨부 전용·fetch 실패) X 유지. 기관명은 `classifyInput().org`(본사명 힌트) — 지사명 주면 KOIPA 국내 공고가 B 로 오판.
+  페이지 chrome 은 `htmlToText` 가 head/nav/header/footer/aside 제거, 다른 글 목록은 프롬프트로 "근거 아님" 지시.
+  g2b 는 본문이 첨부(HWP/PDF)에만 있어 제목 판별만. KOCCA 사업공고(`/bbs/view/B0000204/`)는 본문이 안 나와(419자, chrome 만) 사실상 제목 판별.
+  (최근 2주 제목X 80건 테스트: 본문 판별 A 1 · B ~12 · X ~64 — 10419 「K-스트리트푸드」 A)
   GPT 미판정(키 없음·장애)은 놓치지 않도록 A 와 같이 발송.
 - **요약 (`lib/overseasSummarize.js`)**: g2b 는 검색 행의 마감(`pbancPstgDt` 괄호)·금액(`prspPrce`/`alotBgtAmt`) 그대로. 나머지 소스는 상세 페이지 본문 → GPT `{deadline, amount, topic, summary, contact}`.
   금액은 첨부(HWP/PDF)에만 있는 경우가 많아 null 흔함 → 첨부 텍스트 추출은 2단계(미구현). `ddayOf()` 로 KST 기준 D-day.
