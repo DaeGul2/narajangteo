@@ -75,7 +75,10 @@ function cookieHeader(cookies) {
 // ─────────────────────────────────────────────────────────────
 // 검색 API
 // ─────────────────────────────────────────────────────────────
-function buildSearchPayload(keyword, count, daysBack) {
+// opts (v4.4, 해외공고 발주처 감시용 — 채용 크롤러는 안 씀): startIndex(페이징, 1000건 단위 가능) · prcmBsneSeCd(업무구분 코드 공백 구분)
+//   업무구분: 조070001 물품 · 조070002 일반용역 · 조070003 기술용역 · 조070004 공사 · 조070005 기타 · 민079999 민간
+function buildSearchPayload(keyword, count, daysBack, opts = {}) {
+  const startIndex = Number(opts.startIndex) || 1;
   const today = new Date();
   const fmt = (d) => `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
   const toDt = fmt(today);
@@ -84,7 +87,7 @@ function buildSearchPayload(keyword, count, daysBack) {
   return {
     dlBidPbancLstM: {
       untyBidPbancNo: '', bidPbancNo: '', bidPbancOrd: '', prcmBsneUntyNoOrd: '',
-      prcmBsneSeCd: '0000 조070001 조070002 조070003 조070004 조070005 민079999',
+      prcmBsneSeCd: opts.prcmBsneSeCd || '0000 조070001 조070002 조070003 조070004 조070005 민079999',
       bidPbancNm: keyword,
       pbancPstgDt: '', ldocNoVal: '', bidPrspPrce: '', ctrtDmndRcptNo: '',
       dmstcOvrsSeCd: '', pbancKndCd: '공440002', ctrtTyCd: '', bidCtrtMthdCd: '',
@@ -100,15 +103,15 @@ function buildSearchPayload(keyword, count, daysBack) {
       bidDateType: 'R', brcoOrgnCd: '', deptOrgnCd: '',
       isShop: '', srchTy: '0', cangParmVal: '',
       currentPage: '', recordCountPerPage: String(count),
-      startIndex: 1, endIndex: count,
+      startIndex, endIndex: startIndex + count - 1,
     },
   };
 }
 
-export async function callSearchApi(keyword = '채용', count = 100, daysBack = 30, retry = true) {
+export async function callSearchApi(keyword = '채용', count = 100, daysBack = 30, retry = true, opts = {}) {
   const cookies = await getSessionCookies();
-  const payload = buildSearchPayload(keyword, count, daysBack);
-  console.log(`[search] keyword=${JSON.stringify(keyword)} count=${count} days=${daysBack}`);
+  const payload = buildSearchPayload(keyword, count, daysBack, opts);
+  console.log(`[search] keyword=${JSON.stringify(keyword)} count=${count} days=${daysBack}${opts.startIndex > 1 ? ` from=${opts.startIndex}` : ''}${opts.prcmBsneSeCd ? ` bsne=${opts.prcmBsneSeCd}` : ''}`);
 
   const res = await fetch(SEARCH_URL, {
     method: 'POST',
@@ -118,7 +121,7 @@ export async function callSearchApi(keyword = '채용', count = 100, daysBack = 
   if ((res.status === 401 || res.status === 403) && retry) {
     console.log(`[search] ${res.status} → 세션 재발급 후 재시도`);
     await getSessionCookies(true);
-    return callSearchApi(keyword, count, daysBack, false);
+    return callSearchApi(keyword, count, daysBack, false, opts);
   }
   if (!res.ok) throw new Error(`search ${res.status}`);
   const data = await res.json();

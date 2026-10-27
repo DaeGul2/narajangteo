@@ -1,0 +1,137 @@
+diff --git a/server/cron_overseas.js b/server/cron_overseas.js
+index b64741f..01abfa5 100644
+--- a/server/cron_overseas.js
++++ b/server/cron_overseas.js
+@@ -52,6 +52,8 @@ const SOURCE_HINT = {
+   kosme:   { branchThai: false, orgHint: '중소벤처기업진흥공단 해외지사화 포털 (공지사항)',
+              ruleRe: /(해외민간네트워크|해외지사화).*(모집|공고)/, ruleReason: '중진공 해외민간네트워크·지사화 제도 — 태국 법인 직접 등록 가능' },
+   g2b:     { branchThai: false, orgHint: null },   // 검색 행의 발주기관명 그대로
++  // 투어라즈는 KTO 본사 + 유관기관(지자체 관광재단 등) 공용 게시판 → 행의 기관명 그대로 (v4.4, 2026-10-27)
++  kto:     { branchThai: false, orgHint: null },
+ };
+ export function classifyInput(it) {
+   const h = SOURCE_HINT[it.source] || {};
+diff --git a/server/lib/overseasCrawl.js b/server/lib/overseasCrawl.js
+index 8dedfc0..a82275b 100644
+--- a/server/lib/overseasCrawl.js
++++ b/server/lib/overseasCrawl.js
+@@ -14,7 +14,8 @@ function contentKey(...parts) {
+ 
+ const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+ 
+-// v4 (2026-09-16) — 검색 키워드. 키워드 검색이 필요한 소스(g2b·aT·기업마당·KTO)에서 이 목록으로 각각 검색.
++// v4 (2026-09-16) — 검색 키워드. 키워드 검색이 필요한 소스(g2b·기업마당)에서 이 목록으로 각각 검색.
++// (aT 는 v4.2, KTO 는 v4.4 부터 키워드 없이 첫 페이지 전체 수집)
+ // 수협·지식재산보호원·KOTRA 는 게시판 전체를 가져와 GPT 로 판별하므로 키워드를 쓰지 않는다.
+ // 1년치 g2b 테스트 근거: 한국관(172건 중 5)·바이어(53 중 0)·수출상담회(50 중 1)·임팩트·K-푸드·영문(Thailand/Bangkok 0건)은 제외.
+ export const SEARCH_KEYWORDS = ['태국', '방콕', '치앙마이', '푸켓', '파타야', 'THAIFEX', '동남아', '아세안', 'ASEAN', '메콩'];
+@@ -318,6 +319,74 @@ async function crawlKotra() {
+   }
+ }
+ 
++// ── 한국관광공사 (KTO / 투어라즈) — 입찰공고 2탭(ktoip·other) + 공고·공모, 첫 페이지 전체 (v4.4 재추가, 2026-10-27) ──
++// v3 은 키워드 10개 × 목록 3개 = 30요청이었고, 2026-09-16 웹방화벽이 서버 IP 를 차단해 소스를 뺐다.
++// v4.4: 키워드 없이 목록 3개 × 30건 = 3요청만 하고 GPT 로 판별. 유관기관(other 탭)·공고공모의 기관명은 행에서 그대로.
++// 차단이 계속되면 assertNotBlocked 가 에러를 던져 overseas_sources.last_error 에 남는다 (해결은 KTO 측에 서버 IP 허용 요청).
++async function crawlKto() {
++  const items = [];
++  const seen = new Set();
++  const push = (it) => { if (!seen.has(it.noticeKey)) { seen.add(it.noticeKey); items.push(it); } };
++  const liBlocks = (html) => [...html.matchAll(/<li\b[^>]*>([\s\S]*?)<\/li>/g)].map(m => m[1]);
++
++  // 입찰공고: KTO 자체(ktoip) + 유관기관(other). 행 = 번호 · 기관(col-team) · 제목 · 첨부 · 날짜.
++  //   ktoip 링크는 bbsSeq(안정 id), 날짜 2개(마감일·등록일) / other 링크는 pssrpSeqEnc(렌더마다 재암호화), 날짜 1개(등록일) → 제목+등록일 키
++  for (const tabMode of ['ktoip', 'other']) {
++    const res = await fetchText(`https://touraz.kr/publicTenderList?tabMode=${tabMode}&curPage=1&cntPerPage=30`);
++    if (!res.ok) throw new Error(`KTO tender(${tabMode}) HTTP ${res.status}`);
++    const html = await res.text();
++    assertNotBlocked(html, `KTO tender(${tabMode})`);
++    for (const block of liBlocks(html)) {
++      const link = block.match(/<a href="(\/publicTenderList\/publicTenderView\?tabMode=[^"]*)">\s*<span class="text txt-subject">([\s\S]*?)<\/span>/);
++      if (!link) continue;
++      const [, path, titleRaw] = link;
++      const title = stripTags(titleRaw);
++      if (!title) continue;
++      const dates = [...block.matchAll(/col-date"><strong>([^<]*)<\/strong>/g)].map(x => normDate(x[1])).filter(Boolean);
++      const posted = dates.length ? dates[dates.length - 1] : null;
++      const bbsSeq = path.match(/bbsSeq=(\d+)/)?.[1];
++      push({
++        noticeKey: `tender-${tabMode}-${bbsSeq || contentKey(title, posted || '')}`,
++        title,
++        url: `https://touraz.kr${path.replace(/&amp;/g, '&')}`,
++        agency: stripTags(block.match(/col-team"><span>([\s\S]*?)<\/span>/)?.[1]) || undefined,
++        deadline: dates.length >= 2 ? dates[0] : null,
++        postedAt: posted,
++      });
++    }
++  }
++
++  // 공고·공모 (announcementList) — 카드형. 기관 = .cate 안의 상태 배지(접수/마감 등) 뒤 텍스트, 신청기간 끝 = 마감
++  {
++    const res = await fetchText('https://touraz.kr/announcementList?curPage=1&cntPerPage=30');
++    if (!res.ok) throw new Error(`KTO announcement HTTP ${res.status}`);
++    const html = await res.text();
++    assertNotBlocked(html, 'KTO announcement');
++    for (const block of liBlocks(html)) {
++      const link = block.match(/<div class="subject"><a href="([^"]*pssrpView\?[^"]*)">([\s\S]*?)<\/a>/);
++      if (!link) continue;
++      const [, path, titleRaw] = link;
++      const title = stripTags(titleRaw);
++      if (!title) continue;
++      const posted = normDate(block.match(/등록일\s*<\/dt>\s*<dd>\s*([\s\S]*?)<\/dd>/)?.[1]);
++      const period = block.match(/신청기간\s*<\/dt>\s*<dd>\s*([\s\S]*?)<\/dd>/)?.[1] || '';
++      const periodDates = [...period.matchAll(/\d{4}[.\-/]\d{1,2}[.\-/]\d{1,2}/g)].map(x => normDate(x[0])).filter(Boolean);
++      const cate = (block.match(/<div class="cate">([\s\S]*?)<\/div>/)?.[1] || '')
++        .replace(/<span class="category[^"]*">[\s\S]*?<\/span>/g, ' ');
++      push({
++        // pssrpSeqEnc 는 목록을 그릴 때마다 새로 암호화돼 매 크롤마다 값이 달라진다 (링크는 계속 유효) → 제목+등록일 키
++        noticeKey: `ann-${contentKey(title, posted || '')}`,
++        title,
++        url: `https://touraz.kr${path.replace(/&amp;/g, '&')}`,
++        agency: stripTags(cate) || undefined,
++        deadline: periodDates.length ? periodDates[periodDates.length - 1] : null,
++        postedAt: posted,
++      });
++    }
++  }
++  return items;
++}
++
+ // ── 나라장터 (g2b) — 공고명 키워드 검색 (v4 신규) ──
+ // 채용대행(인사바른) 크롤러와는 검색 함수(callSearchApi)만 공유. 저장·판별·메일은 해외공고 전용.
+ // g2b 검색 특성: 공백·대소문자 무시 부분일치 → 영문 짧은 토큰은 오탐('Thai' → 'With AI') 이라 SEARCH_KEYWORDS 에 없음.
+@@ -526,6 +595,7 @@ const CRAWLERS = {
+   suhyup: crawlSuhyup,
+   at: crawlAt,
+   kotra: crawlKotra,
++  kto: crawlKto,
+ };
+ 
+ export async function crawlSource(sourceKey, opts = {}) {
+diff --git a/server/migrate_overseas.mjs b/server/migrate_overseas.mjs
+index a5c103d..0c4085c 100644
+--- a/server/migrate_overseas.mjs
++++ b/server/migrate_overseas.mjs
+@@ -106,6 +106,11 @@ const SOURCES_SEED = [
+   ['kotra', '대한무역투자진흥공사 (KOTRA) 방콕무역관', 'https://www.kotra.or.kr/bangkok/index.do',
+    'https://www.kotra.or.kr/bangkok/subList/40000000403',
+    '방콕무역관 사업 안내 목록 전체 (키워드 없이) → GPT 판별'],
++  // v4.4 (2026-10-27) — KTO 재추가. v3 키워드 검색(30요청) 중 서버 IP 가 웹방화벽에 차단돼 v4.1 에서 뺐던 소스.
++  //   키워드 없이 목록 3개 첫 페이지(30건씩)만 읽는다. 차단이 풀리기 전엔 매 실행 last_error 에 차단 안내가 남는다.
++  ['kto', '한국관광공사 (KTO) 투어라즈', 'https://touraz.kr',
++   'https://touraz.kr/publicTenderList?tabMode=ktoip, https://touraz.kr/publicTenderList?tabMode=other, https://touraz.kr/announcementList',
++   '입찰공고 2탭(KTO·유관기관) + 공고·공모 첫 페이지 전체 (키워드 없이, 30건씩) → GPT 판별. ⚠ 서버 IP(54.180.150.211) 가 투어라즈 웹방화벽에 차단 중 (2026-10-27 확인) — KTO 측 IP 허용 요청 필요'],
+   // v4.1 (2026-09-16) — 재조사 엑셀 S등급 추가. SBA(동적 페이지)·중진공(로그인)은 나라장터 채널로 커버.
+   ['kofice', '한국국제문화교류진흥원 (KOFICE)', 'https://kofice.or.kr',
+    'https://kofice.or.kr/www/bbs/list.do?mnucd=171&scBbsMngSn=8',
+@@ -180,9 +185,7 @@ async function main() {
+     if (rs.affectedRows > 0) srcSeeded++;
+   }
+   console.log(`  + overseas_sources 시드 ${srcSeeded}건 (총 ${SOURCES_SEED.length}개 시도)`);
+-  // v4.1: KTO 제거 (서버 IP 차단 → 사용자 결정으로 소스 삭제)
+-  const [del] = await conn.execute(`DELETE FROM overseas_sources WHERE source_key = 'kto'`);
+-  if (del.affectedRows) console.log('  - overseas_sources: kto 삭제');
++  // (v4.1 에서 kto 행을 지웠으나 v4.4 에서 무키워드 수집으로 재추가 — 위 SOURCES_SEED 가 다시 넣는다)
+   // 수집 방식 설명은 항상 최신으로 (enabled 는 건드리지 않음)
+   for (const [key, , , target, note] of SOURCES_SEED) {
+     await conn.execute(`UPDATE overseas_sources SET method_note = ?, target_url = ? WHERE source_key = ?`, [note, target, key]);

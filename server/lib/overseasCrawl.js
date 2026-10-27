@@ -322,6 +322,16 @@ async function crawlKotra() {
 // 채용대행(인사바른) 크롤러와는 검색 함수(callSearchApi)만 공유. 저장·판별·메일은 해외공고 전용.
 // g2b 검색 특성: 공백·대소문자 무시 부분일치 → 영문 짧은 토큰은 오탐('Thai' → 'With AI') 이라 SEARCH_KEYWORDS 에 없음.
 // 검색 행에 게시일·입찰마감·금액이 이미 있어 첨부 없이 D-day·금액을 채운다.
+//
+// v4.4 (2026-10-27) — 발주처 감시. 키워드 없이 입찰공고 전체(용역·기타·민간, 물품·공사 제외)를 1,000건씩 페이징으로 받아
+// 우리 쪽에서 발주기관·수요기관 이름으로 걸러낸다. 검색 API 의 수요기관 필터(dmstNm·oderInstUntyGrpNo·srchTy 등)는 서버가 전부 무시해서다.
+// 계기: 투어라즈(KTO)는 서버 IP 차단으로 못 읽지만, KTO 입찰공고는 나라장터에 100% 올라옴(2026-10-27 투어라즈 60건 제목 대조).
+// 물량: 하루 전체 ≈ 4,000건(용역 ≈ 1,500건), 1페이지(1,000건) ≈ 4MB·10초 → 5일 창 ≈ 8페이지. 감시 기관을 늘려도 요청 수는 같다.
+export const G2B_WATCH_AGENCIES = [
+  { re: /한국관광공사/, label: '한국관광공사' },
+];
+const G2B_WATCH_BSNE_CODES = '조070002 조070003 조070005 민079999';   // 일반용역·기술용역·기타·민간 (물품 조070001·공사 조070004 제외)
+const G2B_PAGE_SIZE = 1000;
 function parseG2bDates(raw) {
   // "2026/09/08 09:12<br/>(2026/09/22 10:00)" / "2026/08/28 18:34<br/>(-)" 형태 (엔티티 인코딩 가능)
   const s = String(raw || '').replace(/&lt;br\/?&gt;|<br\s*\/?>/gi, ' ').replace(/&#40;/g, '(').replace(/&#41;/g, ')');
@@ -334,31 +344,57 @@ function parseG2bDates(raw) {
 async function crawlG2b({ daysBack = 5 } = {}) {
   const out = [];
   const seen = new Set();
+  // 검색 행 1건 → 공고 항목. 같은 공고번호는 한 번만 (키워드 여러 개·발주처 감시에 겹쳐 잡혀도 1건)
+  const pushRow = (r, matchedKeyword) => {
+    if (!r || typeof r !== 'object') return false;
+    const name = clean(r.bidPbancNm);
+    const bidNo = normalizeBidNo(r.bidPbancUntyNoOrd || r.bidPbancNo || r.untyBidPbancNo);
+    if (!name || !bidNo || seen.has(bidNo)) return false;
+    seen.add(bidNo);
+    const { posted, deadline } = parseG2bDates(r.pbancPstgDt);
+    const amt = money(r.prspPrce) || money(r.alotBgtAmt) || '';
+    const pbancNo = String(r.bidPbancUntyNo || bidNo.split('-')[0]);
+    const pbancOrd = String(r.bidPbancUntyOrd || bidNo.split('-')[1] || '000');
+    // 조달청 대행 입찰은 발주기관이 "조달청 ○○지방조달청" 이고 실제 기관은 수요기관(dmstNm) → 수요기관을 앞에 쓴다
+    const oder = clean(r.oderInstUntyGrpNm), dmst = clean(r.dmstNm);
+    const agency = oder && dmst && oder !== dmst ? `${dmst} (발주 ${oder})` : (oder || dmst);
+    out.push({
+      noticeKey: bidNo,
+      title: name,
+      url: `https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=${encodeURIComponent(pbancNo)}&bidPbancOrd=${encodeURIComponent(pbancOrd)}`,
+      postedAt: posted,
+      // g2b 전용 부가 정보 — 요약 단계에서 상세 페이지 대신 그대로 사용
+      agency,
+      deadline,
+      amount: amt ? `${amt} (${r.prspPrce ? '추정가격' : '배정예산'})` : null,
+      status: clean(r.pbancSttsNm),
+      matchedKeyword,
+    });
+    return true;
+  };
+
+  // 1) 공고명 키워드 검색 (태국·방콕·동남아 …)
   for (const kw of SEARCH_KEYWORDS) {
-    const rows = await callSearchApi(kw, 100, daysBack);
-    for (const r of rows) {
-      if (!r || typeof r !== 'object') continue;
-      const name = clean(r.bidPbancNm);
-      const bidNo = normalizeBidNo(r.bidPbancUntyNoOrd || r.bidPbancNo || r.untyBidPbancNo);
-      if (!name || !bidNo || seen.has(bidNo)) continue;
-      seen.add(bidNo);
-      const { posted, deadline } = parseG2bDates(r.pbancPstgDt);
-      const amt = money(r.prspPrce) || money(r.alotBgtAmt) || '';
-      const pbancNo = String(r.bidPbancUntyNo || bidNo.split('-')[0]);
-      const pbancOrd = String(r.bidPbancUntyOrd || bidNo.split('-')[1] || '000');
-      out.push({
-        noticeKey: bidNo,
-        title: name,
-        url: `https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=${encodeURIComponent(pbancNo)}&bidPbancOrd=${encodeURIComponent(pbancOrd)}`,
-        postedAt: posted,
-        // g2b 전용 부가 정보 — 요약 단계에서 상세 페이지 대신 그대로 사용
-        agency: clean(r.oderInstUntyGrpNm || r.dmstNm),
-        deadline,
-        amount: amt ? `${amt} (${r.prspPrce ? '추정가격' : '배정예산'})` : null,
-        status: clean(r.pbancSttsNm),
-        matchedKeyword: kw,
-      });
+    for (const r of await callSearchApi(kw, 100, daysBack)) pushRow(r, kw);
+  }
+
+  // 2) 발주처 감시 — 키워드 없이 전체(용역·기타·민간)를 페이징으로 받아 발주기관·수요기관 이름으로 필터
+  if (G2B_WATCH_AGENCIES.length) {
+    let start = 1, pages = 0, scanned = 0, hit = 0;
+    while (pages < 40) {
+      const rows = await callSearchApi('', G2B_PAGE_SIZE, daysBack, true, { startIndex: start, prcmBsneSeCd: G2B_WATCH_BSNE_CODES });
+      pages++;
+      scanned += rows.length;
+      for (const r of rows) {
+        if (!r || typeof r !== 'object') continue;
+        const names = `${r.oderInstUntyGrpNm || ''}|${r.dmstNm || ''}`;
+        const w = G2B_WATCH_AGENCIES.find(w => w.re.test(names));
+        if (w && pushRow(r, `발주처:${w.label}`)) hit++;
+      }
+      if (rows.length < G2B_PAGE_SIZE) break;
+      start += rows.length;
     }
+    console.log(`[g2b] 발주처 감시: ${pages}페이지 ${scanned}행 → ${hit}건 (${G2B_WATCH_AGENCIES.map(w => w.label).join(', ')})`);
   }
   return out;
 }

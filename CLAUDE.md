@@ -6,6 +6,7 @@
 > v2 (2026-05-19): 출퇴근 관리 시스템 추가 (지각 룰 v1, 공휴일 캘린더, 리포트)
 > v3 (2026-07-20): 해외 공고 크롤링 (공공기관 방콕지사 모니터링) + 수신자 직원 셀렉트 전환
 > v4 (2026-09-16): 해외 공고 — 나라장터 소스 추가 + 규칙/GPT 2단계 판별(A/B/X) + 마감 D-day·금액·주제 요약 + 하루 2회 실행
+> v4.4 (2026-10-27): 해외 공고 — g2b **발주처 감시**(한국관광공사): 키워드 없이 전체 입찰공고를 받아 우리 쪽에서 발주처로 필터. 투어라즈(KTO)는 서버 IP 차단으로 포기
 
 ---
 
@@ -13,7 +14,7 @@
 
 - **인사바른 채용대행** = g2b `채용` 크롤러 (`cron.js`, `notices`, `recipients`, `aiClassify.js`, 11:00 KST). **v4 에서 손대지 않음.**
 - **태국 법인 해외공고** = `cron_overseas.js`, `overseas_*` 테이블, 별도 수신자·스케줄·캐시(`_ncs_data/overseas_classify_cache.json`, git ignored).
-- 둘이 공유하는 건 나라장터 검색 함수 `g2bApi.callSearchApi` 하나뿐. 테이블·프롬프트·메일 템플릿은 섞지 않는다.
+- 둘이 공유하는 건 나라장터 검색 함수 `g2bApi.callSearchApi` 하나뿐. 테이블·프롬프트·메일 템플릿은 섞지 않는다. (v4.4 에서 이 함수에 선택 인자 `opts={startIndex, prcmBsneSeCd}` 를 붙였지만 기본값이 기존과 같아 채용 호출(`cron.js`·`index.js`, 인자 3개)은 payload 가 그대로다.)
 
 ---
 
@@ -34,10 +35,12 @@
   GPT 미판정(키 없음·장애)은 놓치지 않도록 A 와 같이 발송.
 - **요약 (`lib/overseasSummarize.js`)**: g2b 는 검색 행의 마감(`pbancPstgDt` 괄호)·금액(`prspPrce`/`alotBgtAmt`) 그대로. 나머지 소스는 상세 페이지 본문 → GPT `{deadline, amount, topic, summary, contact}`.
   금액은 첨부(HWP/PDF)에만 있는 경우가 많아 null 흔함 → 첨부 텍스트 추출은 2단계(미구현). `ddayOf()` 로 KST 기준 D-day.
-- **검색 키워드 (`SEARCH_KEYWORDS`)**: `태국 방콕 치앙마이 푸켓 파타야 THAIFEX 동남아 아세안 ASEAN 메콩` — g2b·aT·기업마당·KTO 에서 사용.
+- **검색 키워드 (`SEARCH_KEYWORDS`)**: `태국 방콕 치앙마이 푸켓 파타야 THAIFEX 동남아 아세안 ASEAN 메콩` — g2b·기업마당에서 사용 (aT 는 v4.2 부터 키워드 없이 첫 페이지 전체).
   g2b 검색은 공백·대소문자 무시 부분일치라 영문 짧은 토큰은 오탐(`Thai`→`With AI`) → 제외. `한국관`(172건 중 5)·`바이어`·`수출상담회`·`임팩트`·`K-푸드` 는 1년치 테스트에서 태국 건 기여 0 → 제외.
 - **소스 13개** (`overseas_sources.source_key`):
   - `g2b` **신규** — `callSearchApi(kw, 100, days_back)` × 키워드 10개. 링크 `https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=…&bidPbancOrd=…`
+    **+ v4.4 발주처 감시** (`G2B_WATCH_AGENCIES`, 현재 한국관광공사) — 키워드 없이 `callSearchApi('', 1000, days_back, true, {startIndex, prcmBsneSeCd})` 로 용역·기타·민간 전체를 1,000건씩 페이징(하루 ≈ 1,500건, 5일 ≈ 8페이지·4MB/페이지)해 발주기관·수요기관 이름으로 필터 → 같은 GPT 판별.
+    검색 API 의 수요기관 필터는 서버가 무시해서 전체 수신 후 필터. 조달청 대행 건은 organization 을 "수요기관 (발주 조달청…)" 으로. 업무구분 코드는 `g2bApi.buildSearchPayload` 주석.
   - `suhyup` `koipa` `kotra` — **키워드 없이** 게시판 첫 페이지 전체 → GPT 판별 (v3 은 키워드 검색)
   - `at` — **v4.2 특이케이스**: 방콕지사 자체 사이트 → 입찰공고 첫 페이지 전체 수집 + **제목 무관 신규 전건 A 발송** (`SOURCE_HINT.at.forceAll`, 인도 등 관할 타국 공고 포함).
     계기: 2026-09-23 「K-스트리트푸드 팝업」(본문에만 '방콕에서') 을 제목 판별로 X 처리해 놓침. 목록 링크는 `/bidding/{srl}`.
@@ -49,6 +52,10 @@
     중진공 해외지사화 포털(`kosme-jisahwa.com`, http 만) 공지. 본사 누리집 공지는 ajax+로그인 벽이라 안 씀.
     소스별 제도 규칙 `SOURCE_HINT.ruleRe` (해외민간네트워크 모집공고, SBA 글로벌 거점·파트너사) 매칭 시 규칙 A (`forceA`).
   - `kto` — **삭제** (2026-09-16, 서버 IP 차단 → 사용자 결정). `migrate_overseas.mjs` 가 행을 지움.
+    **2026-10-27 재검토 → 삭제 유지 (사용자 결정).** 서버 IP(54.180.150.211)는 투어라즈 **사이트 전체**에서 여전히 차단(홈도 391바이트 차단 페이지, 로컬 PC 는 정상). 코드로는 우회 불가(IP 블랙리스트), 서버 IP 교체는 효과 불확실 + 관리자 주소 변경이라 보류.
+    **나라장터가 대신 커버**: 투어라즈 입찰공고 60건을 제목으로 나라장터 대조 → KTO 입찰 11/11 전부 있음(사전규격은 1~2주 뒤 본공고로 뜸), 유관기관 16/23(빠진 7건은 매각·사업자 공개모집·민간 협의회라 원래 g2b 에 없는 종류). 투어라즈 고유분은 공고·공모(지원사업·참가기업 모집)만.
+    나라장터 검색 API(`selectBidPbacScrollTypeList`)는 수요기관 필터(`dmstNm`, `oderInstUntyGrpNo`=KTO `IN0100000058751`, `srchTy` 1/2, `untyGrpGb`)를 전부 무시 → **g2b 발주처 감시**(위 g2b 항목)로 전체 수신 후 우리 쪽 필터. 이것으로 KTO 입찰공고는 전부 커버.
+    무키워드 파서(목록 3개 × 30건, other 탭·공고공모는 `pssrpSeqEnc` 가 렌더마다 바뀌어 제목+등록일 키) 보류본: `docs/해외공고_참고자료/31_투어라즈_무키워드_파서_보류_2026-10-27.patch`
   - 판별 힌트 `cron_overseas.js SOURCE_HINT`: 본사 공용 게시판(수협·KOIPA·KOFICE·KOCCA·GBSA·기업마당·aT)은 지사명 대신 본사명을 GPT 에 줌 — 지사명("방콕지사")을 주면 국내 공고까지 A/B 로 오판(2026-09-16 실제 발생)
 - **스케줄**: 하루 2회 — `overseas_cron_settings.hour/minute`(오전, 09:55) + `hour2/minute2/enabled2`(오후, 15:00). `index.js` `tickOverseas` 슬롯별 가드, 부팅 시 슬롯 시각 이후 실행 기록으로 재수화.
 - **메일**: 발신명 "해외공고 크롤러"(`sendReport({fromName})`), 제목 `[해외공고] 태국 N건 · 동남아·아세안 M건 — 날짜`. 행마다 D-day 배지(D-7 이내 주황)·기관·제목(형광펜)·유형·금액·주제·요약. 마감 임박순.
